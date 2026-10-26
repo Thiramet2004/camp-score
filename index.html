@@ -1139,6 +1139,9 @@ function burst(host) {
             unconfirmed writes, so taps show instantly)
    queue  = admin taps not yet sent (batched), added on top for display
    ============================================================================= */
+const FEED_MAX = 5;           // activity lines shown to viewers
+const FEED_MERGE_MS = 60000;  // same-team changes this close together share one line
+
 const state = {
   scores: zeroScores(),
   queue: {},
@@ -1155,7 +1158,7 @@ const state = {
   isAdmin: false,
   leaderId: undefined, // undefined = take a silent baseline on next render
   quietNext: true,     // next render paints without change animations
-  feed: storage.get(K.feed, []),
+  feed: storage.get(K.feed, []).slice(0, FEED_MAX),
   undo: [],
   rendered: { scores: null, pos: null },
 };
@@ -1818,8 +1821,17 @@ function celebrate(team) {
 
 /* ---------- Activity feed (derived from snapshot diffs: zero extra reads) ---------- */
 function pushFeed(entry) {
-  state.feed.unshift({ ...entry, at: Date.now(), fresh: true });
-  state.feed = state.feed.slice(0, 12);
+  const now = Date.now();
+  const top = state.feed[0];
+  // Same team again within a minute: fold into one line (+1 +1 +5 shows as +7, an undo cancels out)
+  if (entry.type === 'score' && top?.type === 'score' && top.id === entry.id && now - top.at < FEED_MERGE_MS) {
+    const delta = top.delta + entry.delta;
+    state.feed.shift();
+    if (delta) state.feed.unshift({ ...top, delta, at: now, fresh: true });
+  } else {
+    state.feed.unshift({ ...entry, at: now, fresh: true });
+  }
+  state.feed = state.feed.slice(0, FEED_MAX);
   storage.set(K.feed, state.feed.map(({ fresh, ...rest }) => rest));
   renderFeed();
 }
