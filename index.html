@@ -29,6 +29,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#f2f7ff" />
+<script>
+  // Light by default; apply the saved choice before first paint so phones in dark mode don't flash
+  try { document.documentElement.dataset.theme = JSON.parse(localStorage.getItem('csc:theme')) === 'dark' ? 'dark' : 'light'; }
+  catch { document.documentElement.dataset.theme = 'light'; }
+</script>
 <meta name="description" content="กระดานคะแนนค่ายแบบเรียลไทม์ ดูอันดับทุกทีมได้ทันทีจากมือถือหรือจอโปรเจกเตอร์" />
 <title>ค่ายศรีตังสัมพันธ์ ครั้งที่ 12 | Camp Score</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%95%3C/text%3E%3C/svg%3E" />
@@ -227,14 +232,14 @@
   .logo svg { width: 2.1rem; height: 2.1rem; }
   .logo:active { transform: scale(.9) rotate(-6deg); }
   @media (max-width: 420px) {
-    .header-bar { gap: .45rem !important; }
-    .logo { width: 2.5rem; height: 2.5rem; border-radius: .85rem; }
-    .logo svg { width: 1.8rem; height: 1.8rem; }
-    .header-bar .icon-btn { height: 2.35rem; min-width: 2.35rem; padding: 0 .55rem; }
-    .header-bar .status { padding: 0 .6rem; }
-    #appTitle { font-size: 1.05rem !important; }
-    /* phones: theme follows the system, leaving room for the camp name */
-    #themeBtn { display: none; }
+    .header-bar { gap: .4rem !important; }
+    .logo { width: 2.35rem; height: 2.35rem; border-radius: .8rem; }
+    .logo svg { width: 1.7rem; height: 1.7rem; }
+    .header-bar .icon-btn { height: 2.2rem; min-width: 2.2rem; padding: 0 .5rem; }
+    #appTitle { font-size: 1rem !important; }
+    /* phones: status is just the dot, leaving room for the camp name */
+    .header-bar .status { width: .9rem; padding: 0 !important; justify-content: center; background: none; box-shadow: none; }
+    .header-bar .status .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   }
 
   .icon-btn {
@@ -678,8 +683,8 @@
         <div id="statusPill" class="status st-wait" role="status" aria-live="polite">
           <span class="dot" aria-hidden="true"></span><span class="label">กำลังเชื่อมต่อ</span>
         </div>
-        <button id="themeBtn" class="icon-btn" type="button" aria-label="ธีม: อัตโนมัติ" title="เปลี่ยนธีม">
-          <i class="fa-solid fa-circle-half-stroke"></i>
+        <button id="themeBtn" class="icon-btn" type="button" aria-label="ธีม: สว่าง" title="สลับโหมดมืด/สว่าง">
+          <i class="fa-solid fa-sun"></i>
         </button>
         <button id="fullscreenBtn" class="icon-btn md-only" type="button" aria-label="เต็มจอ" title="เต็มจอ (F)">
           <i class="fa-solid fa-expand"></i>
@@ -2220,16 +2225,14 @@ async function nativeShare() {
 }
 
 /* ---------- Theme ---------- */
-const THEMES = ['auto', 'light', 'dark'];
+const THEMES = ['light', 'dark'];
 const THEME_META = {
-  auto: { icon: 'fa-circle-half-stroke', label: 'อัตโนมัติตามระบบ' },
   light: { icon: 'fa-sun', label: 'สว่าง' },
   dark: { icon: 'fa-moon', label: 'มืด' },
 };
 function applyTheme(theme) {
-  const t = THEMES.includes(theme) ? theme : 'auto';
-  if (t === 'auto') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.dataset.theme = t;
+  const t = THEMES.includes(theme) ? theme : 'light';
+  document.documentElement.dataset.theme = t;
   const btn = $('#themeBtn');
   btn.innerHTML = `<i class="fa-solid ${THEME_META[t].icon}"></i>`;
   btn.setAttribute('aria-label', `ธีม: ${THEME_META[t].label}`);
@@ -2240,7 +2243,7 @@ function applyTheme(theme) {
   });
 }
 function cycleTheme() {
-  const cur = $('#themeBtn').dataset.theme || 'auto';
+  const cur = $('#themeBtn').dataset.theme || 'light';
   const next = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length];
   storage.set(K.theme, next);
   applyTheme(next);
@@ -2337,7 +2340,7 @@ function bindEvents() {
 }
 
 function init() {
-  applyTheme(storage.get(K.theme, 'auto'));
+  applyTheme(storage.get(K.theme, 'light'));
   $('#appTitle').textContent = CONFIG.title;
   $('#appSubtitle').textContent = CONFIG.subtitle;
   $('#campLabel').textContent = `รหัสค่าย ${CAMP_ID}`;
