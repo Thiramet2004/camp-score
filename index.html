@@ -575,6 +575,13 @@
   .seg-btn[data-sign="1"][aria-checked="true"] { color: var(--pos); }
   .seg-btn[data-sign="-1"][aria-checked="true"] { color: var(--neg); }
   .seg-btn[data-share="admin"][aria-checked="true"] { color: #8b5cf6; }
+  .team-edit { padding: .75rem; border-radius: 1.2rem; background: var(--card-2); }
+  .team-edit .avatar-box { cursor: pointer; }
+  .team-edit .avatar-box::after { content: '\f2f1'; font: 900 .6rem 'Font Awesome 6 Free'; position: absolute; right: -.2rem; bottom: -.2rem; width: 1.15rem; height: 1.15rem; border-radius: 999px; display: grid; place-items: center; color: #fff; background: var(--c-ink); }
+  .team-edit .field { height: 2.9rem; padding: 0 .85rem; font-size: 1rem; background: var(--card); }
+  .swatches { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; }
+  .swatch { width: 1.5rem; height: 1.5rem; border-radius: 999px; background: var(--sw); box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .18); touch-action: manipulation; }
+  .swatch[aria-checked="true"] { outline: 3px solid var(--ink); outline-offset: 2px; }
   .qchip { height: 2.3rem; padding: 0 .95rem; border-radius: 999px; font-family: Fredoka, sans-serif; font-weight: 600; color: var(--ink-2); background: var(--card-2); box-shadow: inset 0 -2px 0 var(--line); touch-action: manipulation; }
   .qchip:active { transform: translateY(1px); }
   .hold-btn { position: relative; overflow: hidden; width: 100%; touch-action: none; -webkit-touch-callout: none; }
@@ -733,7 +740,7 @@
     <section id="adminConsole" hidden aria-labelledby="adminTitle">
       <div class="flex items-end justify-between gap-3 mb-4 px-1">
         <h2 id="adminTitle" class="section-title"><span class="ic ic-sky"><i class="fa-solid fa-sliders"></i></span>ปรับคะแนน</h2>
-        <p class="text-xs t-muted light hidden sm:block">ทีมเรียงตามลำดับคงที่ กดได้แม่นแม้อันดับจะสลับ</p>
+        <button id="teamsBtn" class="icon-btn" type="button"><i class="fa-solid fa-users-gear"></i><span>จัดการทีม</span></button>
       </div>
       <div id="adminGrid" class="grid gap-5 sm:grid-cols-2 xl:grid-cols-3"></div>
     </section>
@@ -819,6 +826,25 @@
     </div>
   </div>
 
+  <!-- Team manager modal (admins only) -->
+  <div id="teamsModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="teamsTitle">
+    <div class="modal-backdrop" data-close></div>
+    <div class="sheet sheet-wide glass-strong">
+      <div class="sheet-handle"></div>
+      <div class="text-center">
+        <h2 id="teamsTitle" class="font-display text-xl font-semibold">จัดการทีม</h2>
+        <p class="text-sm t-muted light mt-1">แตะรูปการ์ตูนเพื่อเปลี่ยนตัว แก้ชื่อ แล้วเลือกสีทีม</p>
+      </div>
+      <ul id="teamsList" class="mt-5 space-y-3"></ul>
+      <button id="teamAddBtn" type="button" class="btn btn-ghost w-full mt-3"><i class="fa-solid fa-plus"></i><span>เพิ่มทีม</span></button>
+      <p id="teamsError" class="text-sm text-center mt-3 min-h-[1.25rem]" style="color:var(--neg)" role="alert"></p>
+      <div class="flex gap-3 mt-2">
+        <button type="button" class="btn btn-ghost flex-1" data-close>ยกเลิก</button>
+        <button id="teamsSave" type="button" class="btn btn-primary flex-1"><i class="fa-solid fa-check"></i><span>บันทึก</span></button>
+      </div>
+    </div>
+  </div>
+
   <!-- Custom amount modal -->
   <div id="customModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="customTitle">
     <div class="modal-backdrop" data-close></div>
@@ -852,7 +878,7 @@
       <div class="flex flex-col items-center text-center">
         <span class="sheet-icon" style="background:var(--neg-soft);color:var(--neg)"><i class="fa-solid fa-triangle-exclamation"></i></span>
         <h2 id="resetTitle" class="font-display text-xl font-semibold mt-4">รีเซ็ตคะแนนทุกทีม?</h2>
-        <p class="text-sm t-muted light mt-1 max-w-[19rem]">คะแนนของทั้ง 6 ทีมจะกลับเป็น 0 บนทุกหน้าจอทันที และย้อนกลับไม่ได้</p>
+        <p class="text-sm t-muted light mt-1 max-w-[19rem]">คะแนนของทุกทีมจะกลับเป็น 0 บนทุกหน้าจอทันที และย้อนกลับไม่ได้</p>
       </div>
       <button id="holdReset" type="button" class="btn btn-danger hold-btn mt-6">
         <span class="hold-fill"></span>
@@ -892,18 +918,47 @@ const CONFIG = {
 };
 
 /* =============================================================================
-   2) TEAMS  (ids must match TEAM_IDS in worker/src/index.js)
+   2) TEAMS  (admins add, remove and rename teams at runtime; the list lives on
+             the server next to the scores, so every screen gets it live)
    ============================================================================= */
-const TEAMS = [
-  // crown: [x%, y%] of the head top inside the mascot drawing, where the leader's crown sits
-  { id: 'kaitong',   name: 'ทีมไก่โต้ง', color: '#FF5D73', ink: '#C21F3D', blink: 4.6, crown: [48, 23] },
-  { id: 'kaijae',    name: 'ทีมไก่แจ้',  color: '#FFB703', ink: '#9A5C00', blink: 5.4, crown: [50, 29] },
-  { id: 'plabu',     name: 'ทีมปลาบู่',  color: '#14C8B4', ink: '#08776B', blink: 6.1, crown: [32, 38] },
-  { id: 'platu',     name: 'ทีมปลาทู',   color: '#3A86FF', ink: '#1A55C4', blink: 4.9, crown: [30, 42] },
-  { id: 'nokkaew',   name: 'ทีมนกแก้ว',  color: '#5BD04A', ink: '#2B7F1E', blink: 5.8, crown: [50, 24] },
-  { id: 'nokngeuak', name: 'ทีมนกเงือก', color: '#9B5DE5', ink: '#6A31B5', blink: 6.5, crown: [57, 36] },
-].map((t, index) => ({ ...t, index, rgb: hexToRgb(t.color) }));
-const TEAM_BY_ID = Object.fromEntries(TEAMS.map((t) => [t.id, t]));
+// One entry per mascot drawing. crown: [x%, y%] of the head top, where the leader's crown sits
+const KINDS = {
+  kaitong:   { label: 'ไก่โต้ง', color: '#FF5D73', blink: 4.6, crown: [48, 23] },
+  kaijae:    { label: 'ไก่แจ้',  color: '#FFB703', blink: 5.4, crown: [50, 29] },
+  plabu:     { label: 'ปลาบู่',  color: '#14C8B4', blink: 6.1, crown: [32, 38] },
+  platu:     { label: 'ปลาทู',   color: '#3A86FF', blink: 4.9, crown: [30, 42] },
+  nokkaew:   { label: 'นกแก้ว',  color: '#5BD04A', blink: 5.8, crown: [50, 24] },
+  nokngeuak: { label: 'นกเงือก', color: '#9B5DE5', blink: 6.5, crown: [57, 36] },
+};
+const KIND_IDS = Object.keys(KINDS);
+// Team colors and the darker ink used for text on light backgrounds
+const PALETTE = {
+  '#FF5D73': '#C21F3D', '#FFB703': '#9A5C00', '#14C8B4': '#08776B', '#3A86FF': '#1A55C4',
+  '#5BD04A': '#2B7F1E', '#9B5DE5': '#6A31B5', '#FF8A3D': '#B4510F', '#F15BB5': '#A8227A',
+  '#00B4D8': '#00708A', '#8D99AE': '#4F5B70',
+};
+const DEFAULT_TEAMS = KIND_IDS.map((kind) => ({ id: kind, name: `ทีม${KINDS[kind].label}`, kind, color: KINDS[kind].color }));
+const MIN_TEAMS = 2;
+const MAX_TEAMS = 12;
+
+let TEAMS = [];
+let TEAM_BY_ID = {};
+const teamsKey = (list) => JSON.stringify((list || []).map((t) => [t.id, t.name, t.kind, t.color]));
+function setTeams(list) {
+  const valid = Array.isArray(list) && list.length >= MIN_TEAMS && list.every((t) => t?.id && KINDS[t.kind]);
+  TEAMS = (valid ? list : DEFAULT_TEAMS).map((t, index) => {
+    const color = String(t.color || KINDS[t.kind].color).toUpperCase();
+    return {
+      id: t.id, name: t.name, kind: t.kind, color, index,
+      ink: PALETTE[color] || darken(color, 0.4),
+      rgb: hexToRgb(color),
+      blink: KINDS[t.kind].blink + (index % 3) * 0.3,
+      crown: KINDS[t.kind].crown,
+    };
+  });
+  TEAM_BY_ID = Object.fromEntries(TEAMS.map((t) => [t.id, t]));
+}
+setTeams(DEFAULT_TEAMS);
 
 /* =============================================================================
    3) MASCOTS  (original inline SVG characters, viewBox 0 0 120 120)
@@ -1043,15 +1098,20 @@ const CROWN_SVG = `<svg viewBox="0 0 48 36" aria-hidden="true">
   <circle cx="24" cy="20" r="3.4" fill="#FF5D73"/><circle cx="13.5" cy="23" r="2.4" fill="#3A86FF"/><circle cx="34.5" cy="23" r="2.4" fill="#5BD04A"/>
 </svg>`;
 const svgCache = new Map();
-function mascotSVG(id) {
-  if (!svgCache.has(id)) svgCache.set(id, `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">${MASCOTS[id]()}</svg>`);
-  return svgCache.get(id);
+function mascotSVG(kind) {
+  if (!svgCache.has(kind)) svgCache.set(kind, `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">${MASCOTS[kind]()}</svg>`);
+  return svgCache.get(kind);
 }
-const mascotHTML = (t, cls = '') => `<div class="mascot ${cls}" style="--blink:${t.blink}s">${mascotSVG(t.id)}</div>`;
+const mascotHTML = (t, cls = '') => `<div class="mascot ${cls}" style="--blink:${t.blink}s">${mascotSVG(t.kind)}</div>`;
 
 /* =============================================================================
    4) UTILITIES
    ============================================================================= */
+function darken(hex, amount) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const ch = (v) => Math.round(v * (1 - amount)).toString(16).padStart(2, '0');
+  return `#${ch((n >> 16) & 255)}${ch((n >> 8) & 255)}${ch(n & 255)}`;
+}
 function hexToRgb(hex) {
   const n = parseInt(hex.replace('#', ''), 16);
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
@@ -1179,6 +1239,7 @@ const state = {
 };
 
 const cached = storage.get(K.cache);
+if (cached?.teams) setTeams(cached.teams);
 if (cached?.scores) {
   state.scores = normalizeScores(cached.scores);
   state.updatedAt = cached.updatedAt ?? null;
@@ -1213,7 +1274,7 @@ function createWorkerBackend() {
       pending = true;
       for (const [id, d] of Object.entries(w.deltas)) scores[id] = (scores[id] || 0) + d;
     }
-    listener({ scores, updatedAt: server.updatedAt, resetId: server.resetId, fromCache: !live, pending });
+    listener({ teams: server.teams, scores, updatedAt: server.updatedAt, resetId: server.resetId, fromCache: !live, pending });
   }
   function accept(board) {
     if (!board || typeof board.ver !== 'number') return;
@@ -1269,12 +1330,12 @@ function createWorkerBackend() {
     setTimeout(open, wait);
   }
 
-  async function write(path, deltas) {
-    const w = { deltas: deltas || {}, ver: null };
+  async function write(path, body) {
+    const w = { deltas: body?.deltas || {}, ver: null };
     inflight.push(w);
     emit();
     try {
-      const board = await call(path, { method: 'POST', body: deltas && { deltas }, auth: true });
+      const board = await call(path, { method: 'POST', body, auth: true });
       w.ver = board.ver;
       accept(board);
     } catch (err) {
@@ -1292,8 +1353,9 @@ function createWorkerBackend() {
       call('').then((b) => { live = true; accept(b); }).catch(onError);
       open();
     },
-    applyDeltas(deltas) { return write('/deltas', deltas); },
+    applyDeltas(deltas) { return write('/deltas', { deltas }); },
     reset() { return write('/reset', null); },
+    setTeams(teams) { return write('/teams', { teams }); },
     async unlock(pin) {
       try {
         const res = await call('/unlock', { method: 'POST', body: { pin: String(pin) } });
@@ -1322,7 +1384,7 @@ function createLocalBackend() {
   let listener = null;
   const read = () => {
     const db = storage.get(K.demoDb, null);
-    return db?.scores ? db : { scores: zeroScores(), updatedAt: null, resetId: null };
+    return db?.scores ? db : { teams: DEFAULT_TEAMS, scores: zeroScores(), updatedAt: null, resetId: null };
   };
   const emit = (db) => listener?.({ ...db, fromCache: false, pending: false });
   const write = (db) => {
@@ -1341,11 +1403,15 @@ function createLocalBackend() {
     async applyDeltas(deltas) {
       const db = read();
       db.scores = normalizeScores(db.scores);
-      for (const [id, d] of Object.entries(deltas)) db.scores[id] += d;
+      for (const [id, d] of Object.entries(deltas)) if (id in db.scores) db.scores[id] += d;
       db.updatedAt = Date.now();
       write(db);
     },
-    async reset() { write({ scores: zeroScores(), updatedAt: Date.now(), resetId: makeId() }); },
+    async reset() { const db = read(); write({ ...db, scores: zeroScores(), updatedAt: Date.now(), resetId: makeId() }); },
+    async setTeams(teams) {
+      const db = read();
+      write({ ...db, teams, scores: Object.fromEntries(teams.map((t) => [t.id, Number(db.scores?.[t.id]) || 0])), updatedAt: Date.now() });
+    },
     async unlock(pin) { return String(pin) === String(CONFIG.demoPin); },
     async restore() { return true; },
     async lock() {},
@@ -1356,6 +1422,8 @@ function createLocalBackend() {
    7) DATA FLOW
    ============================================================================= */
 function handleData(snap) {
+  const teamsChanged = !!snap.teams && teamsKey(snap.teams) !== teamsKey(TEAMS);
+  if (teamsChanged) setTeams(snap.teams);
   const next = normalizeScores(snap.scores);
   // First snapshot, or first fresh server data after a cached one: take a
   // silent baseline so stale-to-fresh jumps don't fire confetti or feed items.
@@ -1365,6 +1433,7 @@ function handleData(snap) {
       pushFeed({ type: 'reset' });
     } else {
       for (const t of TEAMS) {
+        if (!(t.id in state.scores)) continue; // team just added
         const d = next[t.id] - state.scores[t.id];
         if (d) pushFeed({ type: 'score', id: t.id, delta: d });
       }
@@ -1381,9 +1450,26 @@ function handleData(snap) {
   state.fromCache = !!snap.fromCache;
   state.pending = !!snap.pending;
   state.listenError = null;
-  storage.set(K.cache, { scores: next, updatedAt: state.updatedAt, resetId: state.resetId, savedAt: Date.now() });
+  storage.set(K.cache, { teams: TEAMS.map(({ id, name, kind, color }) => ({ id, name, kind, color })), scores: next, updatedAt: state.updatedAt, resetId: state.resetId, savedAt: Date.now() });
+  if (teamsChanged) rebuildTeams();
   refreshStatus();
   scheduleRender();
+}
+
+// Team list changed (added, removed, renamed, recolored): rebuild every team view
+function rebuildTeams() {
+  for (const id of Object.keys(state.queue)) if (!TEAM_BY_ID[id]) delete state.queue[id];
+  state.undo = state.undo.filter((u) => TEAM_BY_ID[u.id]);
+  state.feed = state.feed.filter((e) => e.type !== 'score' || TEAM_BY_ID[e.id]);
+  buildBoard();
+  if (adminBuilt) buildAdminCards();
+  for (const slot of Object.values(podiumSlots)) slot.id = null;
+  state.rendered = { scores: null, pos: null };
+  state.leaderId = undefined;
+  state.quietNext = true;
+  renderFeed();
+  if (custom.id && !TEAM_BY_ID[custom.id]) closeModal('customModal');
+  if (openModals.some((m) => m.id === 'teamsModal') && !teamsDirty) openTeams();
 }
 
 function handleListenError(err) {
@@ -1601,6 +1687,8 @@ function renderPodium(ranked, quiet) {
   [1, 2, 3].forEach((place) => {
     const r = ranked[place - 1];
     const slot = podiumSlots[place];
+    slot.el.style.visibility = r ? '' : 'hidden';
+    if (!r) { slot.id = null; return; }
     if (slot.id !== r.t.id) {
       slot.id = r.t.id;
       setTeamVars(slot.el, r.t);
@@ -1632,6 +1720,8 @@ function renderPodium(ranked, quiet) {
 const rows = new Map();
 function buildBoard() {
   const board = $('#board');
+  board.textContent = '';
+  rows.clear();
   for (const t of TEAMS) {
     const node = el(`
       <li class="row tc" data-id="${t.id}" style="${teamStyle(t)}">
@@ -1738,8 +1828,10 @@ function showMove(row, steps) {
 /* ---------- Admin console ---------- */
 const adminCards = new Map();
 let adminBuilt = false;
-function buildAdmin() {
+function buildAdminCards() {
   const grid = $('#adminGrid');
+  grid.textContent = '';
+  adminCards.clear();
   for (const t of TEAMS) {
     const plus = [1, 5, 10].map((n) => `<button type="button" class="adj plus" data-delta="${n}" aria-label="เพิ่ม ${n} คะแนนให้${esc(t.name)}">+${n}</button>`).join('');
     const minus = [-1, -5, -10].map((n) => `<button type="button" class="adj minus" data-delta="${n}" aria-label="หัก ${-n} คะแนนจาก${esc(t.name)}">−${-n}</button>`).join('');
@@ -1759,6 +1851,10 @@ function buildAdmin() {
     grid.appendChild(node);
     adminCards.set(t.id, { el: node, mascot: $('.mascot', node), score: $('.admin-score', node), sub: $('.admin-sub', node) });
   }
+}
+function buildAdmin() {
+  const grid = $('#adminGrid');
+  buildAdminCards();
   grid.addEventListener('click', (e) => {
     const btn = e.target.closest('button');
     const card = btn?.closest('[data-id]');
@@ -2092,6 +2188,100 @@ function applyCustom() {
   toast(`${TEAM_BY_ID[custom.id].name} ${fmtDelta(d)} คะแนน`, 'ok', 2000);
 }
 
+/* ---------- Team manager ---------- */
+let teamsDraft = [];
+let teamsDirty = false;
+function openTeams() {
+  teamsDraft = TEAMS.map(({ id, name, kind, color }) => ({ id, name, kind, color }));
+  teamsDirty = false;
+  $('#teamsError').textContent = '';
+  renderTeamsDraft();
+  openModal('teamsModal');
+}
+function draftTeam(t) {
+  const color = t.color.toUpperCase();
+  return { ...t, blink: KINDS[t.kind].blink, rgb: hexToRgb(color), ink: PALETTE[color] || darken(color, 0.4) };
+}
+function renderTeamsDraft() {
+  const list = $('#teamsList');
+  list.innerHTML = teamsDraft.map((t, i) => {
+    const d = draftTeam(t);
+    const swatches = Object.keys(PALETTE).map((c) =>
+      `<button type="button" class="swatch" style="--sw:${c}" data-act="color" data-color="${c}" role="radio" aria-checked="${c === d.color}" aria-label="สี ${c}"></button>`).join('');
+    return `
+      <li class="team-edit tc" data-i="${i}" style="${teamStyle(d)}">
+        <div class="flex items-center gap-3">
+          <button type="button" class="avatar-box" data-act="kind" aria-label="เปลี่ยนตัวการ์ตูน (ตอนนี้: ${KINDS[t.kind].label})">${mascotHTML(d, 'static')}</button>
+          <div class="flex-1 min-w-0">
+            <input class="field" type="text" maxlength="30" value="${esc(t.name)}" data-act="name" aria-label="ชื่อทีม" placeholder="ชื่อทีม" />
+          </div>
+          <button type="button" class="icon-btn danger" data-act="del" aria-label="ลบ${esc(t.name)}" ${teamsDraft.length <= MIN_TEAMS ? 'disabled' : ''}><i class="fa-solid fa-trash-can"></i></button>
+        </div>
+        <div class="swatches" role="radiogroup" aria-label="สีทีม">${swatches}</div>
+      </li>`;
+  }).join('');
+  const add = $('#teamAddBtn');
+  add.disabled = teamsDraft.length >= MAX_TEAMS;
+  add.querySelector('span').textContent = add.disabled ? `ครบ ${MAX_TEAMS} ทีมแล้ว` : 'เพิ่มทีม';
+}
+function addDraftTeam() {
+  if (teamsDraft.length >= MAX_TEAMS) return;
+  // Least-used mascot and an unused color, so the new team stands out
+  const uses = (key, val) => teamsDraft.filter((t) => t[key] === val).length;
+  const kind = [...KIND_IDS].sort((a, b) => uses('kind', a) - uses('kind', b))[0];
+  const color = Object.keys(PALETTE).find((c) => !uses('color', c)) || KINDS[kind].color;
+  const id = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+  teamsDraft.push({ id, name: `ทีม${KINDS[kind].label}`, kind, color });
+  teamsDirty = true;
+  renderTeamsDraft();
+  const inputs = document.querySelectorAll('#teamsList input');
+  inputs[inputs.length - 1]?.select();
+  inputs[inputs.length - 1]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+function onTeamsClick(e) {
+  const btn = e.target.closest('[data-act]');
+  const row = btn?.closest('[data-i]');
+  if (!btn || !row || btn.dataset.act === 'name') return;
+  const t = teamsDraft[Number(row.dataset.i)];
+  if (btn.dataset.act === 'kind') {
+    const next = KIND_IDS[(KIND_IDS.indexOf(t.kind) + 1) % KIND_IDS.length];
+    if (t.color.toUpperCase() === KINDS[t.kind].color) t.color = KINDS[next].color; // follow the mascot's own color
+    t.kind = next;
+  } else if (btn.dataset.act === 'color') {
+    t.color = btn.dataset.color;
+  } else if (btn.dataset.act === 'del') {
+    if (teamsDraft.length <= MIN_TEAMS) return;
+    teamsDraft.splice(Number(row.dataset.i), 1);
+  }
+  teamsDirty = true;
+  renderTeamsDraft();
+}
+async function saveTeams() {
+  const err = $('#teamsError');
+  const teams = teamsDraft.map((t) => ({ ...t, name: t.name.trim() }));
+  if (teams.some((t) => !t.name)) { err.textContent = 'ใส่ชื่อให้ครบทุกทีมก่อน'; return; }
+  const names = teams.map((t) => t.name);
+  if (new Set(names).size !== names.length) { err.textContent = 'มีชื่อทีมซ้ำกัน'; return; }
+  const removed = TEAMS.filter((t) => !teams.some((n) => n.id === t.id) && displayScores()[t.id]);
+  if (removed.length && !confirm(`ลบ ${removed.map((t) => `${t.name} (${fmt(displayScores()[t.id])} คะแนน)`).join(', ')} ?\nคะแนนของทีมที่ลบจะหายไปด้วย`)) return;
+  if (!backend) { err.textContent = 'ยังเชื่อมต่อเซิร์ฟเวอร์ไม่ได้'; return; }
+  const btn = $('#teamsSave');
+  btn.disabled = true;
+  try {
+    await withTimeout(flush(), 8000).catch(() => {});
+    await backend.setTeams(teams);
+    teamsDirty = false;
+    closeModal('teamsModal');
+    toast('บันทึกทีมแล้ว ทุกหน้าจออัปเดตทันที', 'ok');
+  } catch (e) {
+    console.error('[CampScore] save teams failed', e);
+    if (e?.code === 'permission-denied') { closeModal('teamsModal'); handleWriteError(e); }
+    else err.textContent = 'บันทึกไม่สำเร็จ ลองอีกครั้ง';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* ---------- Press-and-hold confirm (reset) ---------- */
 function setupHold(btn, ms, onDone) {
   const fill = $('.hold-fill', btn);
@@ -2181,7 +2371,7 @@ function setShareTarget(target) {
 }
 function openShare(target = 'viewer') {
   const lineup = $('#shareLineup');
-  if (!lineup.childElementCount) lineup.innerHTML = TEAMS.map((t) => mascotHTML(t)).join('');
+  lineup.innerHTML = TEAMS.map((t) => mascotHTML(t)).join('');
   // Only admins can see the staff link, so it never ends up on the projector by accident
   $('#shareSeg').hidden = !state.isAdmin;
   setShareTarget(target);
@@ -2285,6 +2475,16 @@ function bindEvents() {
 
   $('#shareBtn').addEventListener('click', () => openShare('viewer'));
   $('#staffQrBtn').addEventListener('click', () => openShare('admin'));
+  $('#teamsBtn').addEventListener('click', openTeams);
+  $('#teamAddBtn').addEventListener('click', addDraftTeam);
+  $('#teamsSave').addEventListener('click', saveTeams);
+  $('#teamsList').addEventListener('click', onTeamsClick);
+  $('#teamsList').addEventListener('input', (e) => {
+    const row = e.target.closest('[data-i]');
+    if (!row || e.target.dataset.act !== 'name') return;
+    teamsDraft[Number(row.dataset.i)].name = e.target.value;
+    teamsDirty = true;
+  });
   document.querySelectorAll('#shareSeg .seg-btn').forEach((b) => b.addEventListener('click', () => setShareTarget(b.dataset.share)));
   $('#copyBtn').addEventListener('click', copyLink);
   $('#nativeShareBtn').addEventListener('click', nativeShare);

@@ -7,12 +7,26 @@
    GET  /camps/:id/verify   Bearer token -> 204 / 401
    POST /camps/:id/deltas   Bearer token, { deltas: { teamId: n } }
    POST /camps/:id/reset    Bearer token
+   POST /camps/:id/teams    Bearer token, { teams: [{ id, name, kind, color }] }
 
    Secrets (wrangler secret put): ADMIN_PIN, TOKEN_SECRET */
 
 import { DurableObject } from 'cloudflare:workers';
 
-const TEAM_IDS = ['kaitong', 'kaijae', 'plabu', 'platu', 'nokkaew', 'nokngeuak'];
+// kind = which mascot drawing the page uses; a new camp starts with one team per kind
+const KINDS = ['kaitong', 'kaijae', 'plabu', 'platu', 'nokkaew', 'nokngeuak'];
+const DEFAULT_TEAMS = [
+  { id: 'kaitong',   name: 'ทีมไก่โต้ง', kind: 'kaitong',   color: '#FF5D73' },
+  { id: 'kaijae',    name: 'ทีมไก่แจ้',  kind: 'kaijae',    color: '#FFB703' },
+  { id: 'plabu',     name: 'ทีมปลาบู่',  kind: 'plabu',     color: '#14C8B4' },
+  { id: 'platu',     name: 'ทีมปลาทู',   kind: 'platu',     color: '#3A86FF' },
+  { id: 'nokkaew',   name: 'ทีมนกแก้ว',  kind: 'nokkaew',   color: '#5BD04A' },
+  { id: 'nokngeuak', name: 'ทีมนกเงือก', kind: 'nokngeuak', color: '#9B5DE5' },
+];
+const MIN_TEAMS = 2;
+const MAX_TEAMS = 12;
+const TEAM_ID_RE = /^[a-z0-9_-]{1,24}$/;
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const CAMP_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const TOKEN_TTL_MS = 30 * 24 * 3600 * 1000;
 const MAX_FAILS = 8;               // wrong PINs per IP per window
@@ -29,7 +43,22 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { 'Content-Type': 'application/json', ...CORS },
 });
 const empty = (status) => new Response(null, { status, headers: CORS });
-const zeroScores = () => Object.fromEntries(TEAM_IDS.map((id) => [id, 0]));
+const zeroScores = (teams) => Object.fromEntries(teams.map((t) => [t.id, 0]));
+
+// Returns a clean team list, or null if anything is off
+function cleanTeams(raw) {
+  if (!Array.isArray(raw) || raw.length < MIN_TEAMS || raw.length > MAX_TEAMS) return null;
+  const seen = new Set();
+  const teams = [];
+  for (const t of raw) {
+    const id = String(t?.id ?? '');
+    const name = String(t?.name ?? '').trim().slice(0, 30);
+    if (!TEAM_ID_RE.test(id) || seen.has(id) || !name || !KINDS.includes(t?.kind) || !COLOR_RE.test(t?.color ?? '')) return null;
+    seen.add(id);
+    teams.push({ id, name, kind: t.kind, color: t.color.toUpperCase() });
+  }
+  return teams;
+}
 
 /* ---------- tokens: HMAC-SHA256 over "campId.expiry" ---------- */
 const enc = new TextEncoder();
@@ -59,7 +88,7 @@ export default {
   async fetch(req, env) {
     if (req.method === 'OPTIONS') return empty(204);
     const url = new URL(req.url);
-    const m = /^\/camps\/([^/]+)(?:\/(ws|unlock|verify|deltas|reset))?\/?$/.exec(url.pathname);
+    const m = /^\/camps\/([^/]+)(?:\/(ws|unlock|verify|deltas|reset|teams))?\/?$/.exec(url.pathname);
     if (!m) return url.pathname === '/' ? json({ ok: true, service: 'camp-score' }) : json({ error: 'not-found' }, 404);
     const [, campId, action = 'board'] = m;
     if (!CAMP_RE.test(campId)) return json({ error: 'bad-camp' }, 400);
@@ -86,7 +115,7 @@ export default {
       return json({ token: await makeToken(env, campId) });
     }
 
-    if (!['verify', 'deltas', 'reset'].includes(action)) return json({ error: 'method-not-allowed' }, 405);
+    if (!['verify', 'deltas', 'reset', 'teams'].includes(action)) return json({ error: 'method-not-allowed' }, 405);
     if (!(await checkToken(env, campId, req))) return json({ error: 'permission-denied' }, 401);
 
     if (action === 'verify' && req.method === 'GET') return empty(204);
@@ -94,7 +123,7 @@ export default {
       const body = await req.json().catch(() => ({}));
       const deltas = {};
       for (const [id, d] of Object.entries(body?.deltas ?? {})) {
-        if (!TEAM_IDS.includes(id) || !Number.isInteger(d) || Math.abs(d) > MAX_DELTA) {
+        if (!TEAM_ID_RE.test(id) || !Number.isInteger(d) || Math.abs(d) > MAX_DELTA) {
           return json({ error: 'bad-deltas' }, 400);
         }
         if (d) deltas[id] = d;
@@ -102,6 +131,12 @@ export default {
       return json(await board.applyDeltas(deltas));
     }
     if (action === 'reset' && req.method === 'POST') return json(await board.reset());
+    if (action === 'teams' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}));
+      const teams = cleanTeams(body?.teams);
+      if (!teams) return json({ error: 'bad-teams' }, 400);
+      return json(await board.setTeams(teams));
+    }
     return json({ error: 'method-not-allowed' }, 405);
   },
 };
@@ -116,8 +151,8 @@ export class Board extends DurableObject {
   async load() {
     if (!this.board) {
       const saved = await this.ctx.storage.get('board');
-      this.board = { scores: zeroScores(), updatedAt: null, resetId: null, ver: 0, ...saved };
-      this.board.scores = { ...zeroScores(), ...this.board.scores };
+      this.board = { teams: DEFAULT_TEAMS, updatedAt: null, resetId: null, ver: 0, ...saved };
+      this.board.scores = { ...zeroScores(this.board.teams), ...this.board.scores };
     }
     return this.board;
   }
@@ -137,14 +172,23 @@ export class Board extends DurableObject {
 
   async applyDeltas(deltas) {
     const board = await this.load();
-    for (const [id, d] of Object.entries(deltas)) board.scores[id] += d;
+    // Unknown ids are skipped: another admin may have just removed that team
+    for (const [id, d] of Object.entries(deltas)) if (id in board.scores) board.scores[id] += d;
     return this.save(board);
   }
 
   async reset() {
     const board = await this.load();
-    board.scores = zeroScores();
+    board.scores = zeroScores(board.teams);
     board.resetId = crypto.randomUUID();
+    return this.save(board);
+  }
+
+  // Replace the team list; kept teams keep their score, new ones start at 0
+  async setTeams(teams) {
+    const board = await this.load();
+    board.scores = Object.fromEntries(teams.map((t) => [t.id, board.scores[t.id] ?? 0]));
+    board.teams = teams;
     return this.save(board);
   }
 
