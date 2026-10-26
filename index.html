@@ -247,7 +247,11 @@
     box-shadow: var(--btn-shadow);
     transition: transform .12s ease, opacity .2s ease, color .2s ease;
     touch-action: manipulation;
+    white-space: nowrap;
     flex: none;
+  }
+  @media (max-width: 420px) {
+    #adminBar .icon-btn { padding: 0 .5rem; gap: .35rem; font-size: .84rem; }
   }
   .icon-btn:hover { color: var(--ink); }
   .icon-btn:active { transform: translateY(1px) scale(.97); }
@@ -565,6 +569,7 @@
   .seg-btn[aria-checked="true"] { background: var(--card); color: var(--ink); box-shadow: var(--btn-shadow); }
   .seg-btn[data-sign="1"][aria-checked="true"] { color: var(--pos); }
   .seg-btn[data-sign="-1"][aria-checked="true"] { color: var(--neg); }
+  .seg-btn[data-share="admin"][aria-checked="true"] { color: #8b5cf6; }
   .qchip { height: 2.3rem; padding: 0 .95rem; border-radius: 999px; font-family: Fredoka, sans-serif; font-weight: 600; color: var(--ink-2); background: var(--card-2); box-shadow: inset 0 -2px 0 var(--line); touch-action: manipulation; }
   .qchip:active { transform: translateY(1px); }
   .hold-btn { position: relative; overflow: hidden; width: 100%; touch-action: none; -webkit-touch-callout: none; }
@@ -712,6 +717,7 @@
         </div>
       </div>
       <div class="flex items-center gap-2 w-full sm:w-auto">
+        <button id="staffQrBtn" class="icon-btn flex-1 sm:flex-none" type="button" title="QR สำหรับให้สตาฟเข้าโหมดแอดมิน"><i class="fa-solid fa-qrcode"></i><span>QR แอดมิน</span></button>
         <button id="undoBtn" class="icon-btn flex-1 sm:flex-none" type="button" disabled title="ย้อนกลับ (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i><span>ย้อนกลับ</span></button>
         <button id="resetBtn" class="icon-btn danger flex-1 sm:flex-none" type="button"><i class="fa-solid fa-arrows-rotate"></i><span>รีเซ็ต</span></button>
         <button id="lockBtn" class="icon-btn" type="button" aria-label="ออกจากโหมดผู้ดูแล" title="ออกจากโหมดผู้ดูแล"><i class="fa-solid fa-right-from-bracket"></i></button>
@@ -786,9 +792,13 @@
     <div class="sheet sheet-wide glass-strong">
       <div class="sheet-handle"></div>
       <div id="shareLineup" class="lineup mb-3" aria-hidden="true"></div>
+      <div id="shareSeg" class="seg inset mb-4" role="radiogroup" aria-label="แชร์ให้ใคร" hidden>
+        <button type="button" class="seg-btn" role="radio" data-share="viewer" aria-checked="true"><i class="fa-solid fa-users"></i>ผู้ชม</button>
+        <button type="button" class="seg-btn" role="radio" data-share="admin" aria-checked="false"><i class="fa-solid fa-user-shield"></i>แอดมิน</button>
+      </div>
       <div class="text-center">
         <h2 id="shareTitle" class="font-display text-xl font-semibold">สแกนเพื่อดูคะแนนสด</h2>
-        <p class="text-sm t-muted light mt-1">ลิงก์นี้เปิดในโหมดผู้ชมเสมอ ไม่มีปุ่มแก้คะแนน</p>
+        <p id="shareDesc" class="text-sm t-muted light mt-1">ลิงก์นี้เปิดในโหมดผู้ชมเสมอ ไม่มีปุ่มแก้คะแนน</p>
       </div>
       <div class="mt-5"><div id="qrBox" class="qr-box" role="img" aria-label="QR code ของลิงก์ผู้ชม"></div></div>
       <p id="shareNote" hidden class="text-xs text-center mt-4 px-2 leading-relaxed" style="color:#c2620a"></p>
@@ -2131,12 +2141,49 @@ function renderQR(text) {
     box.innerHTML = '<p class="text-sm text-center px-4" style="color:#334155">ลิงก์ยาวเกินไปสำหรับ QR ใช้ลิงก์ด้านล่างแทน</p>';
   }
 }
-function openShare() {
-  const url = viewerUrl();
+function adminUrl() {
+  const u = new URL(viewerUrl());
+  u.searchParams.set('admin', '');
+  return u.toString().replace(/admin=$/, 'admin');
+}
+let shareTarget = 'viewer';
+const SHARE_COPY = {
+  viewer: {
+    title: 'สแกนเพื่อดูคะแนนสด',
+    desc: 'ลิงก์นี้เปิดในโหมดผู้ชมเสมอ ไม่มีปุ่มแก้คะแนน',
+    label: 'QR code ของลิงก์ผู้ชม',
+    text: 'ดูคะแนนค่ายแบบสด ๆ ได้ที่นี่',
+  },
+  admin: {
+    title: 'สแกนเพื่อเข้าโหมดแอดมิน',
+    desc: 'ส่งให้สตาฟเท่านั้น เปิดแล้วจะขึ้นช่องใส่ PIN ทันที',
+    label: 'QR code ของลิงก์แอดมิน',
+    text: 'ลิงก์เข้าโหมดแอดมิน (ต้องใส่ PIN)',
+  },
+};
+function setShareTarget(target) {
+  shareTarget = target === 'admin' && state.isAdmin ? 'admin' : 'viewer';
+  const copy = SHARE_COPY[shareTarget];
+  const url = shareTarget === 'admin' ? adminUrl() : viewerUrl();
+  document.querySelectorAll('#shareSeg .seg-btn').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.share === shareTarget)));
+  $('#shareTitle').textContent = copy.title;
+  $('#shareDesc').textContent = copy.desc;
+  $('#qrBox').setAttribute('aria-label', copy.label);
+  $('#shareUrl').setAttribute('aria-label', copy.label.replace('QR code ของ', ''));
   $('#shareUrl').value = url;
   renderQR(url);
+  updateShareNote();
+}
+function openShare(target = 'viewer') {
   const lineup = $('#shareLineup');
   if (!lineup.childElementCount) lineup.innerHTML = TEAMS.map((t) => mascotHTML(t)).join('');
+  // Only admins can see the staff link, so it never ends up on the projector by accident
+  $('#shareSeg').hidden = !state.isAdmin;
+  setShareTarget(target);
+  $('#nativeShareBtn').hidden = typeof navigator.share !== 'function';
+  openModal('shareModal');
+}
+function updateShareNote() {
   const note = $('#shareNote');
   if (location.protocol === 'file:') {
     note.hidden = false;
@@ -2144,11 +2191,12 @@ function openShare() {
   } else if (IS_DEMO) {
     note.hidden = false;
     note.textContent = 'โหมดเดโม: ผู้ชมจะเห็นคะแนนเฉพาะในเครื่องของตัวเอง ตั้งค่า apiUrl ก่อนแชร์ให้ทั้งค่าย';
+  } else if (shareTarget === 'admin') {
+    note.hidden = false;
+    note.textContent = 'อย่าเปิด QR นี้บนจอโปรเจกเตอร์ คนที่สแกนยังต้องรู้ PIN จึงจะแก้คะแนนได้';
   } else {
     note.hidden = true;
   }
-  $('#nativeShareBtn').hidden = typeof navigator.share !== 'function';
-  openModal('shareModal');
 }
 async function copyLink() {
   const input = $('#shareUrl');
@@ -2167,7 +2215,7 @@ async function copyLink() {
 }
 async function nativeShare() {
   try {
-    await navigator.share({ title: CONFIG.title, text: 'ดูคะแนนค่ายแบบสด ๆ ได้ที่นี่', url: $('#shareUrl').value });
+    await navigator.share({ title: CONFIG.title, text: SHARE_COPY[shareTarget].text, url: $('#shareUrl').value });
   } catch { /* user cancelled */ }
 }
 
@@ -2232,7 +2280,9 @@ function bindEvents() {
     if (taps.length >= 5) { taps = []; openPin(); }
   });
 
-  $('#shareBtn').addEventListener('click', openShare);
+  $('#shareBtn').addEventListener('click', () => openShare('viewer'));
+  $('#staffQrBtn').addEventListener('click', () => openShare('admin'));
+  document.querySelectorAll('#shareSeg .seg-btn').forEach((b) => b.addEventListener('click', () => setShareTarget(b.dataset.share)));
   $('#copyBtn').addEventListener('click', copyLink);
   $('#nativeShareBtn').addEventListener('click', nativeShare);
   $('#themeBtn').addEventListener('click', cycleTheme);
