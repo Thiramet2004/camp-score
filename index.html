@@ -1,0 +1,2295 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<!--
+================================================================================
+  CAMP SCORE  |  Real-time camp score tracker with cartoon team mascots
+================================================================================
+
+  HOSTING
+    This page:  GitHub Pages (static, no build step)
+    Live data:  Cloudflare Worker + Durable Object in ./worker  (free plan)
+    Setup and deploy steps: README.md
+
+  DEMO MODE
+    With CONFIG.apiUrl empty, data is kept in this browser and syncs across
+    tabs on the same device. Demo admin PIN is 1234.
+
+  ADMIN
+    Tap the logo 5 times, or open the page with ?admin. The real PIN is a
+    Worker secret (ADMIN_PIN) checked on the server and never shipped here.
+    Rapid taps are batched client side into one request (about 400 ms).
+
+  URL PARAMETERS
+    ?admin              open the admin PIN prompt (removed from the address bar)
+    ?camp=my-camp-id    use a different scoreboard (multi-camp)
+================================================================================
+-->
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#f2f7ff" />
+<meta name="description" content="กระดานคะแนนค่ายแบบเรียลไทม์ ดูอันดับทุกทีมได้ทันทีจากมือถือหรือจอโปรเจกเตอร์" />
+<title>Camp Score | กระดานคะแนนสด</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%95%3C/text%3E%3C/svg%3E" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Mitr:wght@300;400;500;600&display=swap" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          display: ['Fredoka', 'Mitr', 'system-ui', 'sans-serif'],
+          body: ['Mitr', 'system-ui', '-apple-system', '"Segoe UI"', 'sans-serif'],
+        },
+      },
+    },
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js" defer></script>
+
+<style>
+  [hidden] { display: none !important; }
+
+  /* ---------- Design tokens ---------- */
+  :root {
+    color-scheme: light;
+    --bg: #f2f7ff;
+    --card: #ffffff;
+    --card-2: #f5f8ff;
+    --card-border: rgba(27, 35, 64, .04);
+    --ink: #1b2340;
+    --ink-2: #4a5274;
+    --muted: #6b7397;
+    --line: rgba(27, 35, 64, .08);
+    --track: #edf1fa;
+    --shadow: 0 1px 2px rgba(27, 35, 64, .04), 0 14px 32px -16px rgba(48, 78, 160, .3);
+    --shadow-lg: 0 2px 4px rgba(27, 35, 64, .04), 0 28px 60px -26px rgba(48, 78, 160, .42);
+    --btn-shadow: 0 6px 14px -8px rgba(48, 78, 160, .45), inset 0 -2px 0 rgba(27, 35, 64, .07);
+    --glass: rgba(255, 255, 255, .72);
+    --glass-strong: rgba(255, 255, 255, .94);
+    --glass-border: rgba(255, 255, 255, .95);
+    --primary: #1b2340;
+    --on-primary: #ffffff;
+    --pos: #10994c;
+    --pos-soft: rgba(16, 153, 76, .12);
+    --neg: #e8344e;
+    --neg-soft: rgba(232, 52, 78, .1);
+    --gold: #ffc233;
+    --ring: rgba(58, 134, 255, .65);
+    --scrim: rgba(20, 28, 60, .32);
+    --blob-o: .55;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0d1330;
+      --card: #161e45;
+      --card-2: #1c2552;
+      --card-border: rgba(255, 255, 255, .06);
+      --ink: #eef2ff;
+      --ink-2: #c3c9e6;
+      --muted: #98a0c4;
+      --line: rgba(255, 255, 255, .08);
+      --track: #232d5c;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 16px 34px -18px rgba(0, 0, 0, .8);
+      --shadow-lg: 0 2px 4px rgba(0, 0, 0, .3), 0 30px 60px -26px rgba(0, 0, 0, .9);
+      --btn-shadow: 0 6px 14px -8px rgba(0, 0, 0, .8), inset 0 -2px 0 rgba(0, 0, 0, .25);
+      --glass: rgba(22, 30, 69, .72);
+      --glass-strong: rgba(22, 30, 69, .95);
+      --glass-border: rgba(255, 255, 255, .08);
+      --primary: #eef2ff;
+      --on-primary: #0d1330;
+      --pos: #4ade80;
+      --pos-soft: rgba(74, 222, 128, .14);
+      --neg: #ff6b81;
+      --neg-soft: rgba(255, 107, 129, .14);
+      --ring: rgba(130, 170, 255, .75);
+      --scrim: rgba(0, 0, 0, .55);
+      --blob-o: .16;
+    }
+    :root:not([data-theme="light"]) .tc { --c-text: var(--c); }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d1330;
+    --card: #161e45;
+    --card-2: #1c2552;
+    --card-border: rgba(255, 255, 255, .06);
+    --ink: #eef2ff;
+    --ink-2: #c3c9e6;
+    --muted: #98a0c4;
+    --line: rgba(255, 255, 255, .08);
+    --track: #232d5c;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 16px 34px -18px rgba(0, 0, 0, .8);
+    --shadow-lg: 0 2px 4px rgba(0, 0, 0, .3), 0 30px 60px -26px rgba(0, 0, 0, .9);
+    --btn-shadow: 0 6px 14px -8px rgba(0, 0, 0, .8), inset 0 -2px 0 rgba(0, 0, 0, .25);
+    --glass: rgba(22, 30, 69, .72);
+    --glass-strong: rgba(22, 30, 69, .95);
+    --glass-border: rgba(255, 255, 255, .08);
+    --primary: #eef2ff;
+    --on-primary: #0d1330;
+    --pos: #4ade80;
+    --pos-soft: rgba(74, 222, 128, .14);
+    --neg: #ff6b81;
+    --neg-soft: rgba(255, 107, 129, .14);
+    --ring: rgba(130, 170, 255, .75);
+    --scrim: rgba(0, 0, 0, .55);
+    --blob-o: .16;
+  }
+  :root[data-theme="dark"] .tc { --c-text: var(--c); }
+
+  /* Team scope: --c (vivid), --c-ink (dark shade), --c-rgb are set inline per team */
+  .tc { --c-text: var(--c-ink); }
+
+  /* ---------- Base ---------- */
+  html { -webkit-text-size-adjust: 100%; }
+  @media (min-width: 1536px) { html { font-size: 17px; } }
+  @media (min-width: 1920px) { html { font-size: 19px; } }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Mitr, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-weight: 400;
+    min-height: 100vh;
+    min-height: 100dvh;
+    -webkit-tap-highlight-color: transparent;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  body.modal-open { overflow: hidden; }
+  .font-display { font-family: Fredoka, Mitr, system-ui, sans-serif; }
+  .num { font-family: Fredoka, Mitr, system-ui, sans-serif; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .t-muted { color: var(--muted); }
+  .t-ink2 { color: var(--ink-2); }
+  .light { font-weight: 300; }
+  .wrap {
+    width: 100%;
+    max-width: 80rem;
+    margin-inline: auto;
+    padding-left: max(1rem, env(safe-area-inset-left, 0px));
+    padding-right: max(1rem, env(safe-area-inset-right, 0px));
+  }
+  @media (min-width: 640px) { .wrap { padding-left: max(1.5rem, env(safe-area-inset-left, 0px)); padding-right: max(1.5rem, env(safe-area-inset-right, 0px)); } }
+  @media (min-width: 1024px) { .wrap { padding-left: 2rem; padding-right: 2rem; } }
+  :where(button, a, input, [tabindex]):focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
+  button { -webkit-user-select: none; user-select: none; }
+
+  /* ---------- Sunny sky behind everything ---------- */
+  .sky { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+  .blob { position: absolute; border-radius: 50%; filter: blur(70px); opacity: var(--blob-o); animation: drift 28s ease-in-out infinite alternate; }
+  .blob.b1 { width: 44vmax; height: 44vmax; background: #ffe27a; top: -20vmax; left: -12vmax; }
+  .blob.b2 { width: 40vmax; height: 40vmax; background: #9fd3ff; top: 10vh; right: -18vmax; animation-delay: -9s; }
+  .blob.b3 { width: 38vmax; height: 38vmax; background: #ffb3c7; bottom: -20vmax; left: 8vw; animation-delay: -15s; }
+  .blob.b4 { width: 30vmax; height: 30vmax; background: #a8f0dc; bottom: -10vmax; right: 6vw; animation-delay: -21s; }
+  @keyframes drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(4vmax, 3vmax) scale(1.12); } }
+  .spark { position: absolute; width: 1.1rem; height: 1.1rem; opacity: .0; animation: twinkle 5s ease-in-out infinite; }
+  .spark.s1 { top: 14%; left: 6%; color: #ffc233; }
+  .spark.s2 { top: 30%; right: 5%; color: #ff7aa2; width: .8rem; height: .8rem; animation-delay: -1.4s; }
+  .spark.s3 { top: 62%; left: 3%; color: #3a86ff; width: .7rem; height: .7rem; animation-delay: -2.6s; }
+  .spark.s4 { bottom: 12%; right: 9%; color: #5bd04a; animation-delay: -3.3s; }
+  .spark.s5 { top: 8%; right: 30%; color: #9b5de5; width: .75rem; height: .75rem; animation-delay: -4.1s; }
+  @keyframes twinkle { 0%, 100% { opacity: 0; transform: scale(.4) rotate(0); } 50% { opacity: .85; transform: scale(1) rotate(45deg); } }
+
+  /* ---------- Surfaces ---------- */
+  .card { background: var(--card); border: 1px solid var(--card-border); box-shadow: var(--shadow); }
+  .glass {
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid var(--glass-border);
+  }
+  .glass-strong {
+    background: var(--glass-strong);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    backdrop-filter: blur(28px) saturate(180%);
+    border: 1px solid var(--glass-border);
+  }
+  .inset { background: var(--card-2); box-shadow: inset 0 2px 5px rgba(27, 35, 64, .07); }
+
+  /* ---------- Header ---------- */
+  .app-header { position: sticky; top: 0; z-index: 40; padding-top: calc(env(safe-area-inset-top, 0px) + .75rem); }
+  .header-bar { box-shadow: var(--shadow); }
+  .logo {
+    width: 2.9rem; height: 2.9rem; flex: none;
+    display: grid; place-items: center;
+    border-radius: 1rem;
+    background: linear-gradient(160deg, #fff6d6, #ffe08a);
+    box-shadow: 0 8px 18px -10px rgba(255, 170, 0, .9), inset 0 -2px 0 rgba(200, 130, 0, .18);
+    transition: transform .15s ease;
+    touch-action: manipulation;
+  }
+  .logo svg { width: 2.1rem; height: 2.1rem; }
+  .logo:active { transform: scale(.9) rotate(-6deg); }
+  @media (max-width: 420px) {
+    .header-bar { gap: .45rem !important; }
+    .logo { width: 2.5rem; height: 2.5rem; border-radius: .85rem; }
+    .logo svg { width: 1.8rem; height: 1.8rem; }
+    .header-bar .icon-btn { height: 2.35rem; min-width: 2.35rem; padding: 0 .55rem; }
+    .header-bar .status { padding: 0 .6rem; }
+    #appTitle { font-size: 1.05rem !important; }
+  }
+
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: .45rem;
+    height: 2.6rem; min-width: 2.6rem; padding: 0 .75rem;
+    border-radius: .95rem;
+    font-size: .9rem;
+    color: var(--ink-2);
+    background: var(--card);
+    box-shadow: var(--btn-shadow);
+    transition: transform .12s ease, opacity .2s ease, color .2s ease;
+    touch-action: manipulation;
+    flex: none;
+  }
+  .icon-btn:hover { color: var(--ink); }
+  .icon-btn:active { transform: translateY(1px) scale(.97); }
+  .icon-btn:disabled { opacity: .4; pointer-events: none; }
+  .icon-btn.primary { background: var(--primary); color: var(--on-primary); box-shadow: 0 10px 20px -12px rgba(27, 35, 64, .8); }
+  .icon-btn.danger { color: var(--neg); }
+  .md-only { display: none !important; }
+  @media (min-width: 768px) { .md-only { display: inline-flex !important; } }
+
+  .status {
+    display: inline-flex; align-items: center; gap: .45rem;
+    height: 2rem; padding: 0 .8rem;
+    border-radius: 999px;
+    font-size: .78rem; font-weight: 500;
+    white-space: nowrap;
+    background: var(--card-2);
+    flex: none;
+  }
+  .status .dot { position: relative; width: .5rem; height: .5rem; border-radius: 50%; background: currentColor; flex: none; }
+  .status .label { color: var(--ink-2); }
+  .st-live { color: #12b85a; }
+  .st-live .dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: currentColor; animation: ping 1.8s cubic-bezier(0, 0, .2, 1) infinite; }
+  .st-wait { color: #f59e0b; }
+  .st-off { color: var(--muted); }
+  .st-err { color: var(--neg); }
+  .st-demo { color: #8b5cf6; }
+  @keyframes ping { 75%, 100% { transform: scale(2.6); opacity: 0; } }
+
+  .section-title { display: flex; align-items: center; gap: .6rem; font-family: Fredoka, Mitr, sans-serif; font-weight: 600; font-size: 1.15rem; line-height: 1.2; }
+  .section-title .ic { width: 2.1rem; height: 2.1rem; display: grid; place-items: center; border-radius: .8rem; font-size: .85rem; }
+  .ic-sun { background: #fff1c2; color: #d48a00; }
+  .ic-sky { background: #dcecff; color: #1f6feb; }
+  .ic-mint { background: #d4f7ee; color: #0a8577; }
+  .ic-grape { background: #ece2ff; color: #6a31b5; }
+
+  /* ---------- Layout ---------- */
+  .layout { display: grid; gap: 1.5rem; grid-template-columns: minmax(0, 1fr); grid-template-areas: "podium" "board" "feed"; }
+  .area-podium { grid-area: podium; }
+  .area-board { grid-area: board; }
+  .area-feed { grid-area: feed; }
+  @media (min-width: 1024px) {
+    .layout {
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+      grid-template-areas: "podium board" "feed board";
+      gap: 2rem;
+      align-items: start;
+    }
+  }
+
+  /* ---------- Mascots ---------- */
+  .mascot svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .mascot .m-eye-open { transform-box: fill-box; transform-origin: center; animation: blink var(--blink, 5s) infinite; }
+  .mascot.static .m-eye-open { animation: none; }
+  @keyframes blink { 0%, 93%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.1); } }
+  .m-eye-happy, .m-sweat { display: none; }
+  .mascot.happy .m-eye-open, .mascot.cheer .m-eye-open { display: none; }
+  .mascot.happy .m-eye-happy, .mascot.cheer .m-eye-happy { display: inline; }
+  .mascot.sad .m-sweat { display: inline; }
+  .mascot.sad .m-cheek { opacity: .15; }
+  .mascot.jump { animation: jump .75s cubic-bezier(.28, 1.4, .5, 1); transform-origin: 50% 95%; }
+  .mascot.shake { animation: wobble .65s ease; transform-origin: 50% 95%; }
+  .mascot.dance { animation: dance 1s ease-in-out infinite; transform-origin: 50% 95%; }
+  @keyframes jump {
+    0% { transform: none; }
+    18% { transform: scale(1.12, .86); }
+    45% { transform: translateY(-24%) scale(.94, 1.08); }
+    72% { transform: scale(1.06, .94); }
+    100% { transform: none; }
+  }
+  @keyframes wobble { 0%, 100% { transform: none; } 20% { transform: rotate(-10deg); } 40% { transform: rotate(8deg); } 60% { transform: rotate(-5deg); } 80% { transform: rotate(3deg); } }
+  @keyframes dance { 0%, 100% { transform: rotate(-8deg); } 25% { transform: translateY(-14%) rotate(0); } 50% { transform: rotate(8deg); } 75% { transform: translateY(-14%) rotate(0); } }
+
+  /* Star burst when a team scores */
+  .burst { position: absolute; left: 50%; top: 45%; width: 0; height: 0; pointer-events: none; z-index: 3; }
+  .burst i {
+    position: absolute; left: -.3rem; top: -.3rem;
+    width: .6rem; height: .6rem;
+    background: var(--c);
+    clip-path: polygon(50% 0, 62% 35%, 98% 35%, 69% 57%, 79% 91%, 50% 70%, 21% 91%, 31% 57%, 2% 35%, 38% 35%);
+    animation: burst .85s cubic-bezier(.2, .8, .3, 1) forwards;
+  }
+  .burst i:nth-child(even) { background: #ffc233; }
+  @keyframes burst {
+    from { transform: rotate(var(--a)) translateY(0) scale(.4); opacity: 1; }
+    to { transform: rotate(var(--a)) translateY(calc(-2.6rem * var(--d))) scale(1) rotate(90deg); opacity: 0; }
+  }
+
+  .avatar-box { position: relative; flex: none; width: 3.2rem; height: 3.2rem; border-radius: 1.05rem; background: rgba(var(--c-rgb), .18); }
+  .avatar-box .mascot { position: absolute; width: 3.75rem; left: calc(50% - 1.875rem); bottom: -.25rem; }
+  .avatar-box.xs { width: 2.1rem; height: 2.1rem; border-radius: .75rem; }
+  .avatar-box.xs .mascot { width: 2.45rem; left: calc(50% - 1.225rem); bottom: -.15rem; }
+  .avatar-box.lg { width: 3.8rem; height: 3.8rem; border-radius: 1.25rem; }
+  .avatar-box.lg .mascot { width: 4.5rem; left: calc(50% - 2.25rem); }
+
+  /* ---------- Podium (the hero) ---------- */
+  .podium-card { --lead-rgb: 160, 175, 210; position: relative; overflow: hidden; border-radius: 2rem; padding: 1.25rem 1rem 1.1rem; }
+  @media (min-width: 640px) { .podium-card { padding: 1.6rem 1.75rem 1.4rem; } }
+  .podium-card::before {
+    content: ""; position: absolute; left: 50%; top: -25%;
+    width: 95%; height: 85%; transform: translateX(-50%);
+    background: radial-gradient(closest-side, rgba(var(--lead-rgb), .32), rgba(var(--lead-rgb), 0));
+    pointer-events: none;
+  }
+  .podium-card > * { position: relative; }
+  .podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: .55rem; margin-top: 1.6rem; }
+  @media (min-width: 640px) { .podium { gap: 1rem; } }
+  .slot { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+  .slot-mascot { position: relative; width: 5rem; margin-bottom: -.5rem; z-index: 1; }
+  .place-1 .slot-mascot { width: 6.6rem; }
+  .mascot-wrap { position: relative; animation: bob 3.2s ease-in-out infinite; }
+  .place-1 .mascot-wrap { animation: hop 1.9s ease-in-out infinite; }
+  .place-2 .mascot-wrap { animation-delay: -.9s; }
+  .place-3 .mascot-wrap { animation-delay: -1.7s; }
+  .podium.empty .mascot-wrap { animation: bob 3.2s ease-in-out infinite; }
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+  @keyframes hop {
+    0%, 100% { transform: translateY(0) scale(1); }
+    30% { transform: translateY(-10px) scale(.98, 1.03); }
+    52% { transform: translateY(0) scale(1.04, .96); }
+    66% { transform: translateY(0) scale(1); }
+  }
+  .crown-pos { position: absolute; left: var(--crown-x, 50%); top: var(--crown-y, 20%); width: 38%; max-width: 3.4rem; transform: translate(-50%, -82%); z-index: 2; }
+  .crown { animation: crown 2.4s ease-in-out infinite; transform-origin: 50% 100%; filter: drop-shadow(0 4px 6px rgba(245, 163, 0, .45)); }
+  .crown svg { display: block; width: 100%; height: auto; }
+  @keyframes crown { 0%, 100% { transform: rotate(-9deg); } 50% { transform: rotate(7deg) translateY(-3px); } }
+
+  .pillar {
+    position: relative; overflow: hidden;
+    width: 100%;
+    padding: .8rem .35rem 0;
+    text-align: center;
+    color: var(--c-text);
+    border-radius: 1.3rem 1.3rem .9rem .9rem;
+    background: linear-gradient(180deg, rgba(var(--c-rgb), .2) 0%, rgba(var(--c-rgb), .5) 48%, rgba(var(--c-rgb), .95) 100%);
+    box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, .85), 0 20px 30px -20px rgba(var(--c-rgb), 1);
+  }
+  .p-name { display: block; font-weight: 500; font-size: .78rem; line-height: 1.25; overflow-wrap: anywhere; }
+  .p-score { display: block; font-weight: 700; font-size: 1.6rem; line-height: 1.05; margin-top: .2rem; }
+  .place-1 .p-score { font-size: 2.1rem; }
+  .p-unit { display: inline-flex; align-items: center; gap: .3rem; font-size: .66rem; opacity: .85; }
+  .tie-chip { font-size: .62rem; font-weight: 500; padding: 0 .4rem; border-radius: 999px; background: rgba(255, 255, 255, .7); color: var(--ink-2); }
+  .pillar-rank {
+    position: absolute; left: 0; right: 0; bottom: -.6rem;
+    font-family: Fredoka, sans-serif; font-weight: 700; font-size: 3.4rem; line-height: 1;
+    color: rgba(255, 255, 255, .95);
+    text-shadow: 0 3px 12px rgba(var(--c-rgb), .9);
+  }
+  .place-1 .pillar { height: 11rem; }
+  .place-2 .pillar { height: 9rem; }
+  .place-3 .pillar { height: 7.9rem; }
+  @media (min-width: 640px) {
+    .slot-mascot { width: 6.5rem; }
+    .place-1 .slot-mascot { width: 8.5rem; }
+    .p-name { font-size: .95rem; }
+    .p-score { font-size: 2.1rem; }
+    .place-1 .p-score { font-size: 2.8rem; }
+    .p-unit { font-size: .75rem; }
+    .pillar-rank { font-size: 4.4rem; bottom: -.8rem; }
+    .place-1 .pillar { height: 13rem; }
+    .place-2 .pillar { height: 10.5rem; }
+    .place-3 .pillar { height: 9rem; }
+  }
+  @media (min-width: 1280px) {
+    .slot-mascot { width: 7.5rem; }
+    .place-1 .slot-mascot { width: 10rem; }
+    .place-1 .pillar { height: 15rem; }
+    .place-2 .pillar { height: 12rem; }
+    .place-3 .pillar { height: 10rem; }
+    .place-1 .p-score { font-size: 3.3rem; }
+  }
+  .podium-floor { height: .5rem; border-radius: 999px; margin-top: -.1rem; background: var(--track); }
+
+  /* One orchestrated entrance: pillars rise, then the mascots land */
+  .podium.intro .pillar { animation: grow .8s cubic-bezier(.2, .9, .3, 1.15) both; transform-origin: 50% 100%; }
+  .podium.intro .place-1 .pillar { animation-delay: .12s; }
+  .podium.intro .place-3 .pillar { animation-delay: .24s; }
+  .podium.intro .slot-mascot { animation: land .7s cubic-bezier(.3, 1.5, .5, 1) both; animation-delay: .55s; }
+  .podium.intro .place-1 .slot-mascot { animation-delay: .7s; }
+  .podium.intro .place-3 .slot-mascot { animation-delay: .85s; }
+  @keyframes grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+  @keyframes land { from { transform: translateY(-48px) scale(.6); opacity: 0; } to { transform: none; opacity: 1; } }
+  .slot-mascot.swap { animation: land .6s cubic-bezier(.3, 1.5, .5, 1); }
+
+  /* ---------- Leaderboard ---------- */
+  .board { display: flex; flex-direction: column; gap: .8rem; }
+  .row {
+    position: relative;
+    display: flex; align-items: center; gap: .8rem;
+    padding: .75rem 1rem .75rem .8rem;
+    border-radius: 1.4rem;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--shadow);
+    will-change: transform;
+  }
+  .row[data-medal="1"] { background: linear-gradient(100deg, rgba(var(--c-rgb), .18), var(--card) 62%); }
+  .row.bump { animation: bump .9s ease; }
+  @keyframes bump {
+    0%, 100% { box-shadow: var(--shadow), 0 0 0 0 rgba(var(--c-rgb), 0); }
+    25% { box-shadow: var(--shadow), 0 0 0 4px rgba(var(--c-rgb), .5); }
+  }
+  @media (min-width: 640px) { .row { padding: .9rem 1.25rem .9rem 1rem; gap: 1rem; } }
+  .rank {
+    width: 2rem; height: 2rem; flex: none;
+    display: grid; place-items: center;
+    border-radius: .75rem;
+    font-size: .95rem;
+    color: var(--muted);
+    background: var(--card-2);
+  }
+  .row[data-medal="1"] .rank { background: linear-gradient(150deg, #ffe07a, #ffb703); color: #6b4200; box-shadow: 0 6px 12px -6px rgba(255, 183, 3, .95); }
+  .row[data-medal="2"] .rank { background: linear-gradient(150deg, #eef2f8, #bfcadb); color: #3d4757; box-shadow: 0 6px 12px -6px rgba(140, 152, 170, .9); }
+  .row[data-medal="3"] .rank { background: linear-gradient(150deg, #ffd9bd, #f39a5d); color: #5e2c0b; box-shadow: 0 6px 12px -6px rgba(243, 154, 93, .95); }
+  .row-name { font-weight: 500; font-size: 1rem; line-height: 1.25; }
+  @media (min-width: 640px) { .row-name { font-size: 1.1rem; } }
+  .bar { height: .55rem; border-radius: 999px; background: var(--track); overflow: hidden; margin-top: .45rem; }
+  .bar-fill { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, rgba(var(--c-rgb), .7), var(--c)); transition: width .85s cubic-bezier(.2, .85, .25, 1); }
+  .row-score { font-weight: 700; font-size: 1.65rem; line-height: 1; color: var(--c-text); }
+  @media (min-width: 640px) { .row-score { font-size: 1.95rem; } }
+  .row-unit { font-size: .7rem; margin-top: .2rem; }
+  .move { display: inline-flex; align-items: center; gap: .15rem; font-family: Fredoka, sans-serif; font-size: .74rem; font-weight: 600; padding: 0 .45rem; border-radius: 999px; opacity: 0; transform: translateY(3px); transition: opacity .3s ease, transform .3s ease; }
+  .move.show { opacity: 1; transform: none; }
+  .move.up { color: var(--pos); background: var(--pos-soft); }
+  .move.down { color: var(--neg); background: var(--neg-soft); }
+  .delta { position: absolute; right: 0; top: -1.15rem; font-family: Fredoka, sans-serif; font-weight: 600; font-size: .9rem; padding: 0 .5rem; border-radius: 999px; opacity: 0; pointer-events: none; white-space: nowrap; }
+  .delta.pos { color: var(--pos); background: var(--pos-soft); }
+  .delta.neg { color: var(--neg); background: var(--neg-soft); }
+  .delta.show { animation: delta-up 1.5s ease-out forwards; }
+  @keyframes delta-up {
+    0% { opacity: 0; transform: translateY(8px) scale(.8); }
+    15% { opacity: 1; transform: translateY(0) scale(1.08); }
+    75% { opacity: 1; transform: translateY(-6px) scale(1); }
+    100% { opacity: 0; transform: translateY(-14px); }
+  }
+
+  /* ---------- Activity feed ---------- */
+  .feed-card { border-radius: 1.75rem; padding: 1.25rem; }
+  @media (min-width: 640px) { .feed-card { padding: 1.5rem 1.6rem; } }
+  .feed-item { display: flex; align-items: center; gap: .75rem; padding: .6rem .25rem; }
+  .feed-item + .feed-item { border-top: 1px dashed var(--line); }
+  .feed-item.fresh { animation: feed-in .5s ease; }
+  @keyframes feed-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  .chip { font-family: Fredoka, sans-serif; font-weight: 600; font-size: .9rem; padding: .05rem .6rem; border-radius: 999px; white-space: nowrap; }
+  .chip.pos { color: var(--pos); background: var(--pos-soft); }
+  .chip.neg { color: var(--neg); background: var(--neg-soft); }
+  .lineup { display: flex; justify-content: center; align-items: flex-end; gap: .2rem; }
+  .lineup .mascot { width: 2.7rem; animation: bob 2.4s ease-in-out infinite; }
+  .lineup .mascot:nth-child(2) { animation-delay: -.3s; }
+  .lineup .mascot:nth-child(3) { animation-delay: -.6s; }
+  .lineup .mascot:nth-child(4) { animation-delay: -.9s; }
+  .lineup .mascot:nth-child(5) { animation-delay: -1.2s; }
+  .lineup .mascot:nth-child(6) { animation-delay: -1.5s; }
+
+  /* ---------- Admin ---------- */
+  .admin-badge { width: 2.6rem; height: 2.6rem; display: grid; place-items: center; border-radius: .95rem; color: #fff; background: linear-gradient(150deg, #6f9bff, #3a6df0); box-shadow: 0 10px 18px -10px rgba(58, 109, 240, .9); flex: none; }
+  .admin-card { border-radius: 1.6rem; padding: 1.1rem; }
+  @media (min-width: 640px) { .admin-card { padding: 1.25rem; } }
+  .admin-score { font-weight: 700; font-size: 2.1rem; line-height: 1; color: var(--c-text); }
+  .admin-sub.pending { color: var(--c-text); font-weight: 500; }
+  .adj {
+    height: 3.15rem;
+    border-radius: 1rem;
+    font-family: Fredoka, sans-serif; font-weight: 600; font-size: 1.2rem;
+    transition: transform .08s ease, box-shadow .08s ease;
+    touch-action: manipulation;
+  }
+  .adj.plus { background: rgba(var(--c-rgb), .2); color: var(--c-text); box-shadow: inset 0 -3px 0 rgba(var(--c-rgb), .5); }
+  .adj.minus { background: var(--card-2); color: var(--neg); box-shadow: inset 0 -3px 0 var(--line); }
+  .adj:active { transform: translateY(2px); box-shadow: inset 0 -1px 0 rgba(var(--c-rgb), .4); }
+  .adj-custom {
+    width: 100%; height: 2.75rem; margin-top: .65rem;
+    display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+    border-radius: .95rem;
+    font-size: .9rem;
+    color: var(--ink-2);
+    border: 1.5px dashed var(--line);
+    transition: transform .1s ease, background .2s ease;
+    touch-action: manipulation;
+  }
+  .adj-custom:hover { background: var(--card-2); }
+  .adj-custom:active { transform: scale(.98); }
+
+  /* ---------- Buttons, fields ---------- */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: .55rem;
+    height: 3.1rem; padding: 0 1.25rem;
+    border-radius: 1.05rem;
+    font-weight: 500; font-size: .95rem;
+    transition: transform .12s ease, opacity .2s ease;
+    touch-action: manipulation;
+  }
+  .btn:active { transform: translateY(1px) scale(.98); }
+  .btn:disabled { opacity: .45; pointer-events: none; }
+  .btn-primary { background: var(--primary); color: var(--on-primary); box-shadow: 0 14px 24px -14px rgba(27, 35, 64, .8); }
+  .btn-ghost { background: var(--card-2); color: var(--ink-2); box-shadow: inset 0 -2px 0 var(--line); }
+  .btn-danger { background: linear-gradient(150deg, #ff7088, #e8344e); color: #fff; box-shadow: 0 16px 28px -14px rgba(232, 52, 78, .85); }
+  .field {
+    width: 100%; height: 3.6rem; padding: 0 1rem;
+    border-radius: 1.05rem;
+    color: var(--ink);
+    background: var(--card-2);
+    box-shadow: inset 0 2px 5px rgba(27, 35, 64, .08);
+    border: 2px solid transparent;
+    outline: none;
+    transition: border-color .2s ease;
+  }
+  .field:focus { border-color: var(--ring); }
+  .field::placeholder { color: var(--muted); opacity: .55; }
+  input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: .35rem; padding: .35rem; border-radius: 1.1rem; }
+  .seg-btn { height: 2.6rem; border-radius: .8rem; font-size: .9rem; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; gap: .45rem; transition: background .2s ease, color .2s ease, box-shadow .2s ease; }
+  .seg-btn[aria-checked="true"] { background: var(--card); color: var(--ink); box-shadow: var(--btn-shadow); }
+  .seg-btn[data-sign="1"][aria-checked="true"] { color: var(--pos); }
+  .seg-btn[data-sign="-1"][aria-checked="true"] { color: var(--neg); }
+  .qchip { height: 2.3rem; padding: 0 .95rem; border-radius: 999px; font-family: Fredoka, sans-serif; font-weight: 600; color: var(--ink-2); background: var(--card-2); box-shadow: inset 0 -2px 0 var(--line); touch-action: manipulation; }
+  .qchip:active { transform: translateY(1px); }
+  .hold-btn { position: relative; overflow: hidden; width: 100%; touch-action: none; -webkit-touch-callout: none; }
+  .hold-fill { position: absolute; inset: 0; background: rgba(255, 255, 255, .3); transform: scaleX(0); transform-origin: left center; pointer-events: none; }
+
+  /* ---------- Modals: bottom sheet on phones, dialog on bigger screens ---------- */
+  .modal { position: fixed; inset: 0; z-index: 70; display: flex; align-items: flex-end; justify-content: center; }
+  @media (min-width: 640px) { .modal { align-items: center; padding: 1.5rem; } }
+  .modal-backdrop { position: absolute; inset: 0; background: var(--scrim); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); opacity: 0; transition: opacity .25s ease; }
+  .sheet {
+    position: relative; width: 100%; max-width: 26rem;
+    max-height: 92vh; max-height: 92dvh; overflow-y: auto;
+    border-radius: 1.9rem 1.9rem 0 0;
+    padding: .9rem 1.4rem calc(1.5rem + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -24px 60px -24px rgba(20, 28, 60, .45);
+    transform: translateY(100%);
+    transition: transform .4s cubic-bezier(.2, .9, .25, 1.05), opacity .25s ease;
+  }
+  .sheet-wide { max-width: 30rem; }
+  @media (min-width: 640px) {
+    .sheet { border-radius: 1.9rem; padding: 1.75rem; transform: translateY(18px) scale(.96); opacity: 0; box-shadow: var(--shadow-lg); }
+    .sheet-handle { display: none; }
+  }
+  @media (min-width: 1280px) { .sheet-wide { max-width: 34rem; } }
+  .modal.open .modal-backdrop { opacity: 1; }
+  .modal.open .sheet { transform: none; opacity: 1; }
+  .sheet-handle { width: 2.6rem; height: .3rem; border-radius: 999px; background: var(--line); margin: 0 auto 1.1rem; }
+  .sheet-icon { width: 3.4rem; height: 3.4rem; display: grid; place-items: center; border-radius: 1.2rem; font-size: 1.3rem; }
+  .shake { animation: shake .42s ease; }
+  @keyframes shake { 20% { transform: translateX(-8px); } 40% { transform: translateX(7px); } 60% { transform: translateX(-5px); } 80% { transform: translateX(3px); } }
+  .qr-box { width: min(15rem, 66vw); aspect-ratio: 1; margin: 0 auto; padding: .9rem; border-radius: 1.5rem; background: #fff; box-shadow: 0 18px 40px -22px rgba(20, 28, 60, .55); display: grid; place-items: center; }
+  @media (min-width: 1280px) { .qr-box { width: min(20rem, 40vh); } }
+  .qr-box svg { width: 100%; height: 100%; display: block; }
+  .link-row { display: flex; align-items: center; gap: .6rem; padding: .4rem .4rem .4rem 1rem; border-radius: 1.1rem; }
+  .link-row input { flex: 1; min-width: 0; background: transparent; outline: none; font-size: .85rem; font-weight: 300; color: var(--ink-2); }
+
+  /* ---------- Toasts, leader banner ---------- */
+  .toasts { position: fixed; left: 50%; bottom: calc(1rem + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 90; display: flex; flex-direction: column; align-items: center; gap: .5rem; pointer-events: none; width: max-content; max-width: calc(100vw - 2rem); }
+  .toast {
+    display: flex; align-items: center; gap: .65rem;
+    padding: .75rem 1.05rem;
+    border-radius: 1.1rem;
+    font-size: .9rem;
+    color: var(--ink);
+    box-shadow: var(--shadow-lg);
+    opacity: 0; transform: translateY(12px) scale(.96);
+    transition: opacity .3s ease, transform .35s cubic-bezier(.2, .9, .3, 1.2);
+  }
+  .toast.show { opacity: 1; transform: none; }
+  .toast i { color: var(--ink-2); }
+  .toast-ok i { color: var(--pos); }
+  .toast-warn i { color: #f59e0b; }
+  .toast-err i { color: var(--neg); }
+
+  .leader-banner {
+    position: fixed; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 5.9rem); z-index: 80;
+    display: flex; align-items: center; gap: .9rem;
+    width: max-content; max-width: calc(100vw - 2rem);
+    padding: .65rem 1.4rem .65rem .75rem;
+    border-radius: 1.6rem;
+    white-space: nowrap;
+    box-shadow: 0 26px 60px -22px rgba(var(--c-rgb), 1);
+    opacity: 0; visibility: hidden;
+    transform: translate(-50%, -18px) scale(.9);
+    transition: opacity .4s ease, transform .55s cubic-bezier(.2, .9, .3, 1.3), visibility 0s linear .55s;
+    pointer-events: none;
+  }
+  .leader-banner.show { opacity: 1; visibility: visible; transform: translate(-50%, 0) scale(1); transition: opacity .4s ease, transform .55s cubic-bezier(.2, .9, .3, 1.3), visibility 0s; }
+  .leader-banner .mascot { width: 3.8rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+
+<body class="antialiased">
+  <div class="sky" aria-hidden="true">
+    <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span><span class="blob b4"></span>
+    <svg class="spark s1" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C13 8 16 11 24 12C16 13 13 16 12 24C11 16 8 13 0 12C8 11 11 8 12 0Z"/></svg>
+    <svg class="spark s2" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C13 8 16 11 24 12C16 13 13 16 12 24C11 16 8 13 0 12C8 11 11 8 12 0Z"/></svg>
+    <svg class="spark s3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C13 8 16 11 24 12C16 13 13 16 12 24C11 16 8 13 0 12C8 11 11 8 12 0Z"/></svg>
+    <svg class="spark s4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C13 8 16 11 24 12C16 13 13 16 12 24C11 16 8 13 0 12C8 11 11 8 12 0Z"/></svg>
+    <svg class="spark s5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C13 8 16 11 24 12C16 13 13 16 12 24C11 16 8 13 0 12C8 11 11 8 12 0Z"/></svg>
+  </div>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="wrap">
+      <div class="glass header-bar rounded-[1.5rem] px-2.5 sm:px-3.5 py-2.5 flex items-center gap-2.5 sm:gap-3">
+        <button id="logoBtn" class="logo" type="button" aria-label="Camp Score">
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M24 3v7" stroke="#1b2340" stroke-width="2.2" stroke-linecap="round"/>
+            <path d="M24.5 3.5 33 6.2 24.5 9Z" fill="#ff5d73"/>
+            <path d="M24 10 42.5 39H5.5Z" fill="#ff8a3d" stroke="#ff8a3d" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M24 10 42.5 39H31Z" fill="#f2672a"/>
+            <path d="M24 22 30 39H18Z" fill="#fff3d6"/>
+            <path d="M24 22V39" stroke="#f2b35a" stroke-width="1.6"/>
+            <rect x="3" y="38.5" width="42" height="3.5" rx="1.75" fill="#5bd04a"/>
+          </svg>
+        </button>
+        <div class="min-w-0 flex-1">
+          <h1 id="appTitle" class="font-display font-semibold text-[1.2rem] sm:text-[1.35rem] leading-tight truncate">Camp Score</h1>
+          <p id="appSubtitle" class="text-xs t-muted light truncate">กระดานคะแนนสด</p>
+        </div>
+        <div id="statusPill" class="status st-wait" role="status" aria-live="polite">
+          <span class="dot" aria-hidden="true"></span><span class="label">กำลังเชื่อมต่อ</span>
+        </div>
+        <button id="themeBtn" class="icon-btn" type="button" aria-label="ธีม: อัตโนมัติ" title="เปลี่ยนธีม">
+          <i class="fa-solid fa-circle-half-stroke"></i>
+        </button>
+        <button id="fullscreenBtn" class="icon-btn md-only" type="button" aria-label="เต็มจอ" title="เต็มจอ (F)">
+          <i class="fa-solid fa-expand"></i>
+        </button>
+        <button id="shareBtn" class="icon-btn primary" type="button" aria-label="แชร์ลิงก์ให้ผู้ชม">
+          <i class="fa-solid fa-qrcode"></i><span class="hidden sm:inline">แชร์</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap pt-5 pb-10 space-y-6">
+    <!-- Demo notice -->
+    <div id="demoBanner" hidden class="glass rounded-2xl px-4 py-3 flex items-start gap-3 text-sm">
+      <i class="fa-solid fa-flask mt-1" style="color:#8b5cf6" aria-hidden="true"></i>
+      <p class="flex-1 t-ink2 light leading-relaxed">
+        <span class="font-medium" style="color:var(--ink)">โหมดเดโม</span>
+        ข้อมูลเก็บในเบราว์เซอร์นี้และซิงก์ระหว่างแท็บในเครื่องเดียวกันเท่านั้น
+        ใส่ <code class="text-xs px-1.5 py-0.5 rounded-md inset">apiUrl</code> ใน <code class="text-xs px-1.5 py-0.5 rounded-md inset">CONFIG</code> เพื่อใช้งานจริง
+        แตะโลโก้ 5 ครั้งเพื่อเข้าโหมดผู้ดูแล (PIN <span class="font-medium num">1234</span>)
+      </p>
+      <button id="demoClose" type="button" class="t-muted w-8 h-8 -mr-1 -mt-1 rounded-lg grid place-items-center" aria-label="ปิดข้อความนี้"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <!-- Admin toolbar -->
+    <section id="adminBar" hidden class="glass rounded-[1.6rem] p-3 sm:p-4 flex flex-wrap items-center gap-3" aria-label="เครื่องมือผู้ดูแล">
+      <div class="flex items-center gap-3 flex-1 min-w-[13rem]">
+        <span class="admin-badge" aria-hidden="true"><i class="fa-solid fa-shield-halved"></i></span>
+        <div class="min-w-0">
+          <p class="font-display font-semibold leading-tight">โหมดผู้ดูแล</p>
+          <p class="text-xs t-muted light">ทุกการแตะส่งถึงผู้ชมทันที</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 w-full sm:w-auto">
+        <button id="undoBtn" class="icon-btn flex-1 sm:flex-none" type="button" disabled title="ย้อนกลับ (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i><span>ย้อนกลับ</span></button>
+        <button id="resetBtn" class="icon-btn danger flex-1 sm:flex-none" type="button"><i class="fa-solid fa-arrows-rotate"></i><span>รีเซ็ต</span></button>
+        <button id="lockBtn" class="icon-btn" type="button" aria-label="ออกจากโหมดผู้ดูแล" title="ออกจากโหมดผู้ดูแล"><i class="fa-solid fa-right-from-bracket"></i></button>
+      </div>
+    </section>
+
+    <!-- Admin console: fixed team order so buttons never move under a finger -->
+    <section id="adminConsole" hidden aria-labelledby="adminTitle">
+      <div class="flex items-end justify-between gap-3 mb-4 px-1">
+        <h2 id="adminTitle" class="section-title"><span class="ic ic-sky"><i class="fa-solid fa-sliders"></i></span>ปรับคะแนน</h2>
+        <p class="text-xs t-muted light hidden sm:block">ทีมเรียงตามลำดับคงที่ กดได้แม่นแม้อันดับจะสลับ</p>
+      </div>
+      <div id="adminGrid" class="grid gap-5 sm:grid-cols-2 xl:grid-cols-3"></div>
+    </section>
+
+    <!-- Viewer content -->
+    <div class="layout">
+      <section id="podiumCard" class="area-podium card podium-card" aria-labelledby="podiumTitle">
+        <div class="flex items-center justify-between gap-3">
+          <h2 id="podiumTitle" class="section-title"><span class="ic ic-sun"><i class="fa-solid fa-trophy"></i></span>สามอันดับแรก</h2>
+          <span id="podiumHint" class="text-xs t-muted light" hidden>รอคะแนนแรกของค่าย</span>
+        </div>
+        <div id="podium" class="podium intro"></div>
+        <div class="podium-floor"></div>
+      </section>
+
+      <section class="area-board" aria-labelledby="boardTitle">
+        <div class="flex items-center justify-between gap-3 mb-4 px-1">
+          <h2 id="boardTitle" class="section-title"><span class="ic ic-grape"><i class="fa-solid fa-ranking-star"></i></span>ตารางคะแนน</h2>
+          <span class="text-xs t-muted light">รวมทุกทีม <span id="totalPoints" class="num t-ink2">0</span> คะแนน</span>
+        </div>
+        <ol id="board" class="board" aria-label="อันดับทุกทีม"></ol>
+      </section>
+
+      <section class="area-feed card feed-card" aria-labelledby="feedTitle">
+        <h2 id="feedTitle" class="section-title"><span class="ic ic-mint"><i class="fa-solid fa-bolt"></i></span>ความเคลื่อนไหวล่าสุด</h2>
+        <ul id="feed" class="mt-3"></ul>
+      </section>
+    </div>
+  </main>
+
+  <footer class="wrap pb-8 flex flex-wrap items-center justify-between gap-2 text-xs t-muted light">
+    <span><i class="fa-regular fa-clock mr-1.5" aria-hidden="true"></i>อัปเดตล่าสุด <span id="updatedAt">ยังไม่มีข้อมูล</span></span>
+    <span id="campLabel"></span>
+  </footer>
+
+  <!-- PIN modal -->
+  <div id="pinModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="pinTitle">
+    <div class="modal-backdrop" data-close></div>
+    <div class="sheet glass-strong">
+      <div class="sheet-handle"></div>
+      <div class="flex flex-col items-center text-center">
+        <span class="sheet-icon ic-sky"><i class="fa-solid fa-lock"></i></span>
+        <h2 id="pinTitle" class="font-display text-xl font-semibold mt-4">เข้าสู่โหมดผู้ดูแล</h2>
+        <p class="text-sm t-muted light mt-1">กรอกรหัสผู้ดูแลเพื่อเพิ่มหรือหักคะแนน</p>
+      </div>
+      <form id="pinForm" class="mt-6" autocomplete="off" novalidate>
+        <input id="pinInput" class="field text-center num text-2xl tracking-[.4em]" type="password" inputmode="numeric" autocomplete="off" maxlength="32" placeholder="••••" aria-label="รหัสผู้ดูแล" aria-describedby="pinError" />
+        <p id="pinError" class="text-sm text-center min-h-[1.5rem] mt-2" style="color:var(--neg)" aria-live="assertive"></p>
+        <p id="pinDemoHint" hidden class="text-xs text-center t-muted light -mt-1 mb-4">โหมดเดโม รหัสคือ 1234</p>
+        <div class="grid grid-cols-2 gap-3 mt-2">
+          <button type="button" class="btn btn-ghost" data-close>ยกเลิก</button>
+          <button type="submit" id="pinSubmit" class="btn btn-primary"><i class="fa-solid fa-unlock"></i><span>ปลดล็อก</span></button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Share modal -->
+  <div id="shareModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <div class="modal-backdrop" data-close></div>
+    <div class="sheet sheet-wide glass-strong">
+      <div class="sheet-handle"></div>
+      <div id="shareLineup" class="lineup mb-3" aria-hidden="true"></div>
+      <div class="text-center">
+        <h2 id="shareTitle" class="font-display text-xl font-semibold">สแกนเพื่อดูคะแนนสด</h2>
+        <p class="text-sm t-muted light mt-1">ลิงก์นี้เปิดในโหมดผู้ชมเสมอ ไม่มีปุ่มแก้คะแนน</p>
+      </div>
+      <div class="mt-5"><div id="qrBox" class="qr-box" role="img" aria-label="QR code ของลิงก์ผู้ชม"></div></div>
+      <p id="shareNote" hidden class="text-xs text-center mt-4 px-2 leading-relaxed" style="color:#c2620a"></p>
+      <div class="link-row inset mt-5">
+        <i class="fa-solid fa-link t-muted" aria-hidden="true"></i>
+        <input id="shareUrl" type="text" readonly aria-label="ลิงก์ผู้ชม" />
+        <button id="copyBtn" type="button" class="btn btn-primary h-10 px-4 text-sm rounded-[.85rem]"><i class="fa-regular fa-copy"></i><span>คัดลอก</span></button>
+      </div>
+      <div class="flex gap-3 mt-5">
+        <button id="nativeShareBtn" type="button" class="btn btn-ghost flex-1"><i class="fa-solid fa-arrow-up-from-bracket"></i><span>แชร์</span></button>
+        <button type="button" class="btn btn-ghost flex-1" data-close>ปิด</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom amount modal -->
+  <div id="customModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="customTitle">
+    <div class="modal-backdrop" data-close></div>
+    <div id="customSheet" class="sheet glass-strong tc">
+      <div class="sheet-handle"></div>
+      <div class="flex items-center gap-3">
+        <span id="customAvatar" class="avatar-box lg"></span>
+        <div class="min-w-0">
+          <h2 id="customTitle" class="font-display text-lg font-semibold leading-tight">กำหนดคะแนนเอง</h2>
+          <p id="customTeam" class="text-sm t-muted"></p>
+        </div>
+      </div>
+      <div class="seg inset mt-5" role="radiogroup" aria-label="เพิ่มหรือหัก">
+        <button type="button" class="seg-btn" role="radio" data-sign="1" aria-checked="true"><i class="fa-solid fa-plus"></i>เพิ่มคะแนน</button>
+        <button type="button" class="seg-btn" role="radio" data-sign="-1" aria-checked="false"><i class="fa-solid fa-minus"></i>หักคะแนน</button>
+      </div>
+      <input id="customInput" class="field text-center num text-4xl mt-4" type="number" inputmode="numeric" min="1" max="9999" step="1" placeholder="0" aria-label="จำนวนคะแนน" />
+      <div id="customChips" class="flex flex-wrap justify-center gap-2 mt-4"></div>
+      <div class="grid grid-cols-2 gap-3 mt-6">
+        <button type="button" class="btn btn-ghost" data-close>ยกเลิก</button>
+        <button type="button" id="customApply" class="btn btn-primary" disabled>ใส่จำนวนคะแนน</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reset modal -->
+  <div id="resetModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="resetTitle">
+    <div class="modal-backdrop" data-close></div>
+    <div class="sheet glass-strong">
+      <div class="sheet-handle"></div>
+      <div class="flex flex-col items-center text-center">
+        <span class="sheet-icon" style="background:var(--neg-soft);color:var(--neg)"><i class="fa-solid fa-triangle-exclamation"></i></span>
+        <h2 id="resetTitle" class="font-display text-xl font-semibold mt-4">รีเซ็ตคะแนนทุกทีม?</h2>
+        <p class="text-sm t-muted light mt-1 max-w-[19rem]">คะแนนของทั้ง 6 ทีมจะกลับเป็น 0 บนทุกหน้าจอทันที และย้อนกลับไม่ได้</p>
+      </div>
+      <button id="holdReset" type="button" class="btn btn-danger hold-btn mt-6">
+        <span class="hold-fill"></span>
+        <span class="relative inline-flex items-center gap-2"><i class="fa-solid fa-hand-pointer"></i>กดค้างไว้เพื่อรีเซ็ต</span>
+      </button>
+      <button type="button" class="btn btn-ghost w-full mt-3" data-close>ยกเลิก</button>
+    </div>
+  </div>
+
+  <!-- New leader banner -->
+  <div id="leaderBanner" class="leader-banner glass-strong tc" aria-hidden="true">
+    <span id="leaderAvatar"></span>
+    <div class="min-w-0">
+      <p class="text-xs t-muted light">ขึ้นเป็นอันดับ 1 แล้ว</p>
+      <p id="leaderName" class="font-display font-semibold text-lg leading-tight truncate"></p>
+    </div>
+    <i class="fa-solid fa-crown text-xl" style="color:var(--gold)" aria-hidden="true"></i>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="announcer" class="sr-only" aria-live="polite"></div>
+
+<script type="module">
+/* =============================================================================
+   1) CONFIG
+   apiUrl points at the Cloudflare Worker in ./worker (see README.md).
+   While it is empty, the app runs in local demo mode.
+   ============================================================================= */
+const CONFIG = {
+  apiUrl: '',                    // Cloudflare Worker URL; empty = local demo mode
+  campId: 'youth-camp-2026',     // one scoreboard per camp id
+  title: 'Camp Score',
+  subtitle: 'กระดานคะแนนสด',
+  demoPin: '1234',               // demo mode only; real PIN is a Worker secret
+  batchDelayMs: 400,             // merge rapid admin taps into one request
+  batchMaxWaitMs: 1200,
+};
+
+/* =============================================================================
+   2) TEAMS  (ids must match TEAM_IDS in worker/src/index.js)
+   ============================================================================= */
+const TEAMS = [
+  // crown: [x%, y%] of the head top inside the mascot drawing, where the leader's crown sits
+  { id: 'kaitong',   name: 'ทีมไก่โต้ง', color: '#FF5D73', ink: '#C21F3D', blink: 4.6, crown: [48, 23] },
+  { id: 'kaijae',    name: 'ทีมไก่แจ้',  color: '#FFB703', ink: '#9A5C00', blink: 5.4, crown: [50, 29] },
+  { id: 'plabu',     name: 'ทีมปลาบู่',  color: '#14C8B4', ink: '#08776B', blink: 6.1, crown: [32, 38] },
+  { id: 'platu',     name: 'ทีมปลาทู',   color: '#3A86FF', ink: '#1A55C4', blink: 4.9, crown: [30, 42] },
+  { id: 'nokkaew',   name: 'ทีมนกแก้ว',  color: '#5BD04A', ink: '#2B7F1E', blink: 5.8, crown: [50, 24] },
+  { id: 'nokngeuak', name: 'ทีมนกเงือก', color: '#9B5DE5', ink: '#6A31B5', blink: 6.5, crown: [57, 36] },
+].map((t, index) => ({ ...t, index, rgb: hexToRgb(t.color) }));
+const TEAM_BY_ID = Object.fromEntries(TEAMS.map((t) => [t.id, t]));
+
+/* =============================================================================
+   3) MASCOTS  (original inline SVG characters, viewBox 0 0 120 120)
+   Every mascot has: open eyes (blink), happy eyes, blush, and a sweat drop.
+   ============================================================================= */
+const INK = '#1B2340';
+const eyes = (x1, x2, y, r = 6) => `
+  <g class="m-eyes">
+    <g class="m-eye-open">
+      <ellipse cx="${x1}" cy="${y}" rx="${r * 0.82}" ry="${r}" fill="${INK}"/>
+      <ellipse cx="${x2}" cy="${y}" rx="${r * 0.82}" ry="${r}" fill="${INK}"/>
+      <circle cx="${x1 + r * 0.28}" cy="${y - r * 0.38}" r="${r * 0.34}" fill="#fff"/>
+      <circle cx="${x2 + r * 0.28}" cy="${y - r * 0.38}" r="${r * 0.34}" fill="#fff"/>
+    </g>
+    <g class="m-eye-happy" fill="none" stroke="${INK}" stroke-width="3.4" stroke-linecap="round">
+      <path d="M${x1 - r} ${y + 2} Q${x1} ${y - r - 2} ${x1 + r} ${y + 2}"/>
+      <path d="M${x2 - r} ${y + 2} Q${x2} ${y - r - 2} ${x2 + r} ${y + 2}"/>
+    </g>
+  </g>`;
+const cheeks = (x1, x2, y, rx = 6) => `
+  <ellipse class="m-cheek" cx="${x1}" cy="${y}" rx="${rx}" ry="${rx * 0.6}" fill="#FF6F91" opacity=".5"/>
+  <ellipse class="m-cheek" cx="${x2}" cy="${y}" rx="${rx}" ry="${rx * 0.6}" fill="#FF6F91" opacity=".5"/>`;
+const sweat = (x, y) => `<path class="m-sweat" d="M${x} ${y}c-4 6-5 9-5 11a5 5 0 0 0 10 0c0-2-1-5-5-11z" fill="#7CC8FF" stroke="#fff" stroke-width="1.5"/>`;
+const feet = (x1, x2, y, c = '#FF9F1C') => `
+  <g stroke="${c}" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M${x1} ${y}v7m-5 2l5-2l5 2"/>
+    <path d="M${x2} ${y}v7m-5 2l5-2l5 2"/>
+  </g>`;
+const shadow = (cx = 60, w = 30) => `<ellipse cx="${cx}" cy="114" rx="${w}" ry="4" fill="${INK}" opacity=".12"/>`;
+
+const MASCOTS = {
+  // ไก่โต้ง: proud rooster, big comb and a sweeping two-tone tail
+  kaitong: () => `
+    ${shadow(58, 30)}
+    <path d="M80 72C96 56 100 34 90 20C88 40 80 52 70 60Z" fill="#E23D57"/>
+    <path d="M84 78C104 70 114 50 108 34C100 52 90 62 76 68Z" fill="#FFC233"/>
+    <path d="M82 86C100 86 112 74 112 60C102 74 92 78 78 78Z" fill="#E23D57"/>
+    ${feet(50, 66, 104)}
+    <path d="M42 46C36 32 48 26 52 36C50 24 64 22 63 35C68 26 80 30 73 44Z" fill="#E23D57"/>
+    <ellipse cx="58" cy="74" rx="33" ry="32" fill="#FF6B7F"/>
+    <ellipse cx="54" cy="84" rx="20" ry="17" fill="#fff" opacity=".28"/>
+    <path d="M28 76C20 82 22 96 33 96C38 91 38 82 28 76Z" fill="#E8475E"/>
+    ${eyes(47, 69, 66)}
+    ${cheeks(38, 78, 77)}
+    <path d="M52 72Q58 69 64 72L59 80Q58 81 57 80Z" fill="#FFC233" stroke="#FFB000" stroke-width="1.5" stroke-linejoin="round"/>
+    <ellipse cx="58" cy="85" rx="3.6" ry="5" fill="#E23D57"/>
+    ${sweat(86, 52)}`,
+
+  // ไก่แจ้: tiny round bantam with a perky comb and flappy wings
+  kaijae: () => `
+    ${shadow(60, 26)}
+    ${feet(52, 68, 102, '#FF8A00')}
+    <path d="M86 70C98 62 102 50 98 42C92 52 86 56 80 58Z" fill="#FF9F1C"/>
+    <circle cx="60" cy="72" r="31" fill="#FFC93C"/>
+    <ellipse cx="60" cy="84" rx="19" ry="14" fill="#fff" opacity=".35"/>
+    <path d="M52 44C49 34 58 32 59 40C60 31 70 33 67 43Z" fill="#FF4D5E"/>
+    <path d="M30 72C22 70 20 80 28 84C33 84 35 78 30 72Z" fill="#FFB000"/>
+    <path d="M90 72C98 70 100 80 92 84C87 84 85 78 90 72Z" fill="#FFB000"/>
+    ${eyes(50, 70, 66, 5.6)}
+    ${cheeks(41, 79, 76, 5.4)}
+    <path d="M55 72Q60 70 65 72L61 79Q60 80 59 79Z" fill="#FF8A00" stroke="#FF8A00" stroke-width="1.5" stroke-linejoin="round"/>
+    ${sweat(86, 50)}`,
+
+  // ปลาบู่: chubby goby with a big head, spotty back and pouty lips
+  plabu: () => `
+    ${shadow(62, 32)}
+    <path d="M90 66C100 54 112 52 114 58C110 66 110 76 114 84C112 90 100 88 90 76Z" fill="#0FA898"/>
+    <path d="M50 44C56 30 70 30 74 44Z" fill="#0FA898"/>
+    <path d="M74 48C80 38 92 40 92 52Z" fill="#0FA898"/>
+    <path d="M14 72C14 52 34 42 56 44C78 46 94 58 94 72C94 88 76 98 54 98C32 98 14 90 14 72Z" fill="#22D3BE"/>
+    <path d="M22 80C30 92 48 94 62 92C76 90 86 84 90 78C78 86 40 90 22 80Z" fill="#fff" opacity=".45"/>
+    <circle cx="66" cy="60" r="3.4" fill="#0FA898"/><circle cx="76" cy="66" r="2.6" fill="#0FA898"/>
+    <circle cx="72" cy="54" r="2.2" fill="#0FA898"/><circle cx="82" cy="58" r="2" fill="#0FA898"/>
+    <path d="M52 80C58 74 70 76 70 86C62 88 56 86 52 80Z" fill="#0FA898" opacity=".7"/>
+    ${eyes(30, 46, 58, 6)}
+    ${cheeks(24, 52, 72, 5)}
+    <ellipse cx="17" cy="76" rx="5.5" ry="4.6" fill="#FF7A90"/>
+    <path d="M13 76h8" stroke="#D6455E" stroke-width="1.6" stroke-linecap="round"/>
+    ${sweat(56, 34)}`,
+
+  // ปลาทู: sleek blue mackerel with tiger stripes and a forked tail
+  platu: () => `
+    ${shadow(60, 32)}
+    <path d="M88 70L110 50C112 58 108 66 102 72C108 78 112 86 110 94Z" fill="#1F6FEB"/>
+    <path d="M54 44C60 34 72 36 74 46Z" fill="#1F6FEB"/>
+    <path d="M12 72C12 54 36 44 60 46C78 48 92 60 94 72C92 84 78 96 60 98C36 100 12 90 12 72Z" fill="#4C95FF"/>
+    <path d="M14 76C22 92 44 98 62 96C78 94 90 84 93 74C80 84 40 90 14 76Z" fill="#EAF3FF"/>
+    <g stroke="#1F5FCC" stroke-width="3" stroke-linecap="round" fill="none" opacity=".75">
+      <path d="M52 52q4 6 0 12"/><path d="M62 52q4 6 0 12"/><path d="M72 54q4 6 0 12"/><path d="M82 58q3 5 0 10"/>
+    </g>
+    <path d="M58 80C64 76 72 78 72 86C66 88 60 86 58 80Z" fill="#1F6FEB" opacity=".55"/>
+    ${eyes(28, 42, 64, 5.6)}
+    ${cheeks(22, 48, 76, 4.8)}
+    <path d="M17 79q4 4 9 1" stroke="${INK}" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+    ${sweat(56, 34)}`,
+
+  // นกแก้ว: round green parrot, red hooked beak, long two-tone tail
+  nokkaew: () => `
+    ${shadow(60, 28)}
+    <path d="M70 92C78 104 84 112 92 116C92 106 86 96 80 88Z" fill="#2FA84F"/>
+    <path d="M62 94C66 106 70 112 76 116C78 106 76 98 72 90Z" fill="#3DB8E8"/>
+    ${feet(52, 66, 102, '#8A94A8')}
+    <path d="M52 40C50 30 58 26 60 34C62 26 70 28 66 38Z" fill="#FF5A5F"/>
+    <ellipse cx="60" cy="70" rx="31" ry="33" fill="#5BD04A"/>
+    <ellipse cx="60" cy="82" rx="18" ry="16" fill="#C8F07A" opacity=".75"/>
+    <path d="M30 70C22 78 24 94 36 96C40 88 38 76 30 70Z" fill="#3BB04A"/>
+    <path d="M90 70C98 78 96 94 84 96C80 88 82 76 90 70Z" fill="#3BB04A"/>
+    <circle cx="49" cy="62" r="9" fill="#fff"/><circle cx="71" cy="62" r="9" fill="#fff"/>
+    ${eyes(49, 71, 62, 5.4)}
+    ${cheeks(40, 80, 75, 5)}
+    <path d="M52 68C54 64 66 64 68 68C68 76 62 82 58 84C58 78 54 74 52 68Z" fill="#FF4D4D"/>
+    <path d="M56 70C58 68 62 68 64 70C62 72 58 72 56 70Z" fill="#FF8080"/>
+    ${sweat(88, 48)}`,
+
+  // นกเงือก: purple hornbill with a giant banana beak and casque
+  nokngeuak: () => `
+    ${shadow(66, 28)}
+    <path d="M80 92C88 102 96 108 104 110C102 100 96 92 88 86Z" fill="#fff"/>
+    <path d="M78 88C86 98 94 104 102 106C100 96 94 88 86 82Z" fill="#7B3FD0"/>
+    ${feet(58, 72, 102, '#8A94A8')}
+    <ellipse cx="66" cy="72" rx="29" ry="31" fill="#9B5DE5"/>
+    <ellipse cx="66" cy="84" rx="17" ry="14" fill="#fff" opacity=".9"/>
+    <path d="M86 70C94 78 92 92 82 94C78 86 80 76 86 70Z" fill="#7B3FD0"/>
+    <path d="M50 54C42 40 22 38 10 52C20 50 32 52 44 58Z" fill="#FF8A1F"/>
+    <path d="M48 62C36 58 20 62 8 76C10 82 18 80 26 74C34 68 42 66 50 68Z" fill="#FFC233"/>
+    <path d="M50 56C40 50 22 52 12 64C26 58 38 58 50 64Z" fill="#FFD866"/>
+    <path d="M8 76C14 74 20 72 26 74" stroke="#E07B00" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+    <circle cx="60" cy="60" r="8.5" fill="#fff"/><circle cx="78" cy="60" r="8.5" fill="#fff"/>
+    ${eyes(60, 78, 60, 5)}
+    <g stroke="${INK}" stroke-width="2" stroke-linecap="round"><path d="M56 50l-2-4"/><path d="M60 49v-4"/><path d="M78 49v-4"/><path d="M82 50l2-4"/></g>
+    ${cheeks(56, 84, 72, 4.6)}
+    ${sweat(94, 46)}`,
+};
+const CROWN_SVG = `<svg viewBox="0 0 48 36" aria-hidden="true">
+  <path d="M5 30L3 9L14 18L24 3L34 18L45 9L43 30Z" fill="#FFC233" stroke="#F5A300" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="4" y="28" width="40" height="6" rx="3" fill="#F5A300"/>
+  <circle cx="24" cy="20" r="3.4" fill="#FF5D73"/><circle cx="13.5" cy="23" r="2.4" fill="#3A86FF"/><circle cx="34.5" cy="23" r="2.4" fill="#5BD04A"/>
+</svg>`;
+const svgCache = new Map();
+function mascotSVG(id) {
+  if (!svgCache.has(id)) svgCache.set(id, `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">${MASCOTS[id]()}</svg>`);
+  return svgCache.get(id);
+}
+const mascotHTML = (t, cls = '') => `<div class="mascot ${cls}" style="--blink:${t.blink}s">${mascotSVG(t.id)}</div>`;
+
+/* =============================================================================
+   4) UTILITIES
+   ============================================================================= */
+function hexToRgb(hex) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+}
+const $ = (sel, root = document) => root.querySelector(sel);
+const params = new URLSearchParams(location.search);
+const CAMP_ID = (() => {
+  const p = params.get('camp');
+  return p && /^[A-Za-z0-9_-]{1,64}$/.test(p) ? p : CONFIG.campId;
+})();
+const IS_DEMO = !CONFIG.apiUrl;
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const nf = new Intl.NumberFormat('th-TH');
+const fmt = (n) => (n < 0 ? '−' : '') + nf.format(Math.abs(n));
+const fmtDelta = (d) => (d > 0 ? '+' : '−') + nf.format(Math.abs(d));
+const makeId = () => (crypto.randomUUID?.() ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const zeroScores = () => Object.fromEntries(TEAMS.map((t) => [t.id, 0]));
+const normalizeScores = (raw) => Object.fromEntries(TEAMS.map((t) => {
+  const n = Number(raw?.[t.id]);
+  return [t.id, Number.isFinite(n) ? Math.trunc(n) : 0];
+}));
+function el(html) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html.trim();
+  return tpl.content.firstElementChild;
+}
+function setTeamVars(node, t) {
+  node.style.setProperty('--c', t.color);
+  node.style.setProperty('--c-ink', t.ink);
+  node.style.setProperty('--c-rgb', t.rgb);
+}
+const teamStyle = (t) => `--c:${t.color};--c-ink:${t.ink};--c-rgb:${t.rgb}`;
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'timeout' })), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+function haptic(ms = 8) { try { navigator.vibrate?.(ms); } catch { /* unsupported */ } }
+
+/* LocalStorage wrapper: never throws (private mode, sandboxed iframes, full quota) */
+const storage = (() => {
+  const mem = new Map();
+  let ls = null;
+  try { localStorage.setItem('__csc', '1'); localStorage.removeItem('__csc'); ls = localStorage; } catch { ls = null; }
+  return {
+    get(key, fallback = null) {
+      try {
+        const raw = ls ? ls.getItem(key) : null;
+        const val = raw ?? mem.get(key);
+        return val == null ? fallback : JSON.parse(val);
+      } catch { return fallback; }
+    },
+    set(key, value) {
+      const raw = JSON.stringify(value);
+      mem.set(key, raw);
+      try { ls?.setItem(key, raw); } catch { /* quota or blocked: memory copy still works */ }
+    },
+    remove(key) {
+      mem.delete(key);
+      try { ls?.removeItem(key); } catch { /* ignore */ }
+    },
+  };
+})();
+const K = {
+  cache: `csc:${CAMP_ID}:cache`,
+  feed: `csc:${CAMP_ID}:feed`,
+  admin: `csc:${CAMP_ID}:admin`,
+  demoDb: `csc:${CAMP_ID}:demo-db`,
+  token: `csc:${CAMP_ID}:token`,
+  theme: 'csc:theme',
+  demoBanner: 'csc:demo-banner-closed',
+};
+
+/* Mascot reactions: hop + happy eyes + star burst on gains, wobble + sweat on losses */
+function react(mascot, delta) {
+  if (!mascot || !delta || reduceMotion.matches || document.hidden) return;
+  mascot.classList.remove('jump', 'shake', 'cheer', 'sad');
+  void mascot.offsetWidth;
+  mascot.classList.add(delta > 0 ? 'jump' : 'shake', delta > 0 ? 'cheer' : 'sad');
+  clearTimeout(mascot._moodTimer);
+  mascot._moodTimer = setTimeout(() => mascot.classList.remove('jump', 'shake', 'cheer', 'sad'), 1400);
+  if (delta > 0) burst(mascot.parentElement);
+}
+function burst(host) {
+  if (!host) return;
+  const b = document.createElement('span');
+  b.className = 'burst';
+  b.innerHTML = Array.from({ length: 8 }, (_, i) =>
+    `<i style="--a:${Math.round(i * 45 + Math.random() * 18)}deg;--d:${(0.8 + Math.random() * 0.6).toFixed(2)}"></i>`).join('');
+  host.appendChild(b);
+  setTimeout(() => b.remove(), 950);
+}
+
+/* =============================================================================
+   5) STATE
+   scores = last snapshot from the backend (includes the admin's own
+            unconfirmed writes, so taps show instantly)
+   queue  = admin taps not yet sent (batched), added on top for display
+   ============================================================================= */
+const state = {
+  scores: zeroScores(),
+  queue: {},
+  updatedAt: null,
+  resetId: null,
+  hydrated: false,
+  everLive: false,
+  fromCache: true,
+  pending: false,
+  listenError: null,
+  backendFailed: false,
+  connectTimedOut: false,
+  status: null,
+  isAdmin: false,
+  leaderId: undefined, // undefined = take a silent baseline on next render
+  quietNext: true,     // next render paints without change animations
+  feed: storage.get(K.feed, []),
+  undo: [],
+  rendered: { scores: null, pos: null },
+};
+
+const cached = storage.get(K.cache);
+if (cached?.scores) {
+  state.scores = normalizeScores(cached.scores);
+  state.updatedAt = cached.updatedAt ?? null;
+  state.resetId = cached.resetId ?? null;
+}
+
+let backend = null;
+let connecting = false;
+
+/* =============================================================================
+   6) BACKENDS  (same interface, the UI never cares which one is active)
+   ============================================================================= */
+
+/* ---------- 6a) Cloudflare Worker (production) ---------- */
+function createWorkerBackend() {
+  const api = `${CONFIG.apiUrl.replace(/\/+$/, '')}/camps/${encodeURIComponent(CAMP_ID)}`;
+  const wsUrl = `${api.replace(/^http/, 'ws')}/ws`;
+  let token = storage.get(K.token);
+  let server = null;     // last board from the server
+  let inflight = [];     // writes sent but maybe not in `server` yet: { deltas, ver }
+  let listener = null;
+  let live = false;
+
+  const fail = (code) => Object.assign(new Error(code), { code });
+  // Server board plus our own unconfirmed writes, so admin taps show instantly
+  function emit() {
+    if (!listener || !server) return;
+    const scores = { ...server.scores };
+    let pending = false;
+    for (const w of inflight) {
+      if (w.ver != null && w.ver <= server.ver) continue;
+      pending = true;
+      for (const [id, d] of Object.entries(w.deltas)) scores[id] = (scores[id] || 0) + d;
+    }
+    listener({ scores, updatedAt: server.updatedAt, resetId: server.resetId, fromCache: !live, pending });
+  }
+  function accept(board) {
+    if (!board || typeof board.ver !== 'number') return;
+    if (server && board.ver < server.ver) return;
+    server = board;
+    inflight = inflight.filter((w) => w.ver == null || w.ver > board.ver);
+    emit();
+  }
+  async function call(path, { method = 'GET', body, auth = false, timeout = 12000 } = {}) {
+    const headers = {};
+    if (body) headers['Content-Type'] = 'application/json';
+    if (auth) headers.Authorization = `Bearer ${token}`;
+    let res;
+    try {
+      res = await withTimeout(fetch(`${api}${path}`, { method, headers, body: body && JSON.stringify(body) }), timeout);
+    } catch (err) {
+      throw err?.code === 'timeout' ? err : fail('unavailable');
+    }
+    if (res.status === 401) throw fail('permission-denied');
+    if (res.status === 403) throw fail('wrong-pin');
+    if (res.status === 429) throw fail('too-many-attempts');
+    if (!res.ok) throw fail(`http-${res.status}`);
+    return res.status === 204 ? null : res.json();
+  }
+
+  // One socket per viewer, reconnects with backoff, pings to keep proxies from idling it out
+  let retry = 0;
+  function open() {
+    let ws;
+    try { ws = new WebSocket(wsUrl); } catch { scheduleReconnect(); return; }
+    let ping = null;
+    ws.onopen = () => {
+      retry = 0;
+      ping = setInterval(() => { try { ws.send('ping'); } catch { /* closing */ } }, 25000);
+    };
+    ws.onmessage = (e) => {
+      if (e.data === 'pong') return;
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      if (msg.type !== 'board') return;
+      live = true;
+      accept(msg);
+    };
+    ws.onclose = () => {
+      clearInterval(ping);
+      if (live) { live = false; emit(); }
+      scheduleReconnect();
+    };
+  }
+  function scheduleReconnect() {
+    const wait = Math.min(15000, 500 * 2 ** retry) + Math.random() * 400;
+    retry += 1;
+    setTimeout(open, wait);
+  }
+
+  async function write(path, deltas) {
+    const w = { deltas: deltas || {}, ver: null };
+    inflight.push(w);
+    emit();
+    try {
+      const board = await call(path, { method: 'POST', body: deltas && { deltas }, auth: true });
+      w.ver = board.ver;
+      accept(board);
+    } catch (err) {
+      inflight = inflight.filter((x) => x !== w);
+      emit();
+      throw err;
+    }
+  }
+
+  return {
+    kind: 'worker',
+    start(onData, onError) {
+      listener = onData;
+      // First paint from plain HTTP so the board shows even before the socket opens
+      call('').then((b) => { live = true; accept(b); }).catch(onError);
+      open();
+    },
+    applyDeltas(deltas) { return write('/deltas', deltas); },
+    reset() { return write('/reset', null); },
+    async unlock(pin) {
+      try {
+        const res = await call('/unlock', { method: 'POST', body: { pin: String(pin) } });
+        token = res.token;
+        storage.set(K.token, token);
+        return true;
+      } catch (err) {
+        if (err.code === 'wrong-pin') return false;
+        throw err;
+      }
+    },
+    // true = still admin, false = not admin, null = unknown (offline)
+    async restore() {
+      if (!token) return false;
+      try { await call('/verify', { auth: true, timeout: 10000 }); return true; } catch (err) {
+        return err.code === 'permission-denied' ? false : null;
+      }
+    },
+    async lock() { token = null; storage.remove(K.token); },
+  };
+}
+
+/* ---------- 6b) Local demo (no apiUrl yet) ---------- */
+function createLocalBackend() {
+  const channel = 'BroadcastChannel' in window ? new BroadcastChannel(`csc-${CAMP_ID}`) : null;
+  let listener = null;
+  const read = () => {
+    const db = storage.get(K.demoDb, null);
+    return db?.scores ? db : { scores: zeroScores(), updatedAt: null, resetId: null };
+  };
+  const emit = (db) => listener?.({ ...db, fromCache: false, pending: false });
+  const write = (db) => {
+    storage.set(K.demoDb, db);
+    try { channel?.postMessage(db); } catch { /* ignore */ }
+    emit(db);
+  };
+  return {
+    kind: 'local',
+    start(onData) {
+      listener = onData;
+      if (channel) channel.onmessage = (e) => emit(e.data);
+      window.addEventListener('storage', (e) => { if (e.key === K.demoDb) emit(read()); });
+      emit(read());
+    },
+    async applyDeltas(deltas) {
+      const db = read();
+      db.scores = normalizeScores(db.scores);
+      for (const [id, d] of Object.entries(deltas)) db.scores[id] += d;
+      db.updatedAt = Date.now();
+      write(db);
+    },
+    async reset() { write({ scores: zeroScores(), updatedAt: Date.now(), resetId: makeId() }); },
+    async unlock(pin) { return String(pin) === String(CONFIG.demoPin); },
+    async restore() { return true; },
+    async lock() {},
+  };
+}
+
+/* =============================================================================
+   7) DATA FLOW
+   ============================================================================= */
+function handleData(snap) {
+  const next = normalizeScores(snap.scores);
+  // First snapshot, or first fresh server data after a cached one: take a
+  // silent baseline so stale-to-fresh jumps don't fire confetti or feed items.
+  const silent = !state.hydrated || (!snap.fromCache && !state.everLive);
+  if (!silent) {
+    if (snap.resetId && snap.resetId !== state.resetId) {
+      pushFeed({ type: 'reset' });
+    } else {
+      for (const t of TEAMS) {
+        const d = next[t.id] - state.scores[t.id];
+        if (d) pushFeed({ type: 'score', id: t.id, delta: d });
+      }
+    }
+  } else {
+    state.leaderId = undefined;
+    state.quietNext = true;
+  }
+  state.hydrated = true;
+  if (!snap.fromCache) state.everLive = true;
+  state.scores = next;
+  if (snap.resetId) state.resetId = snap.resetId;
+  if (snap.updatedAt) state.updatedAt = snap.updatedAt;
+  state.fromCache = !!snap.fromCache;
+  state.pending = !!snap.pending;
+  state.listenError = null;
+  storage.set(K.cache, { scores: next, updatedAt: state.updatedAt, resetId: state.resetId, savedAt: Date.now() });
+  refreshStatus();
+  scheduleRender();
+}
+
+function handleListenError(err) {
+  console.error('[CampScore] listener error', err);
+  state.listenError = err?.code || 'unknown';
+  refreshStatus();
+  toast(err?.code === 'permission-denied'
+    ? 'อ่านคะแนนไม่ได้ ตรวจสอบการตั้งค่าเซิร์ฟเวอร์'
+    : 'การเชื่อมต่อขัดข้อง กำลังแสดงคะแนนล่าสุดที่บันทึกไว้', 'err', 5000);
+}
+
+async function connect() {
+  if (backend || connecting) return;
+  connecting = true;
+  refreshStatus();
+  try {
+    const b = IS_DEMO ? createLocalBackend() : createWorkerBackend();
+    backend = b;
+    state.backendFailed = false;
+    b.start(handleData, handleListenError);
+  } catch (err) {
+    console.error('[CampScore] could not load the sync service', err);
+    state.backendFailed = true;
+    toast('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กำลังแสดงคะแนนล่าสุดที่บันทึกไว้', 'warn', 4500);
+  } finally {
+    connecting = false;
+    refreshStatus();
+  }
+  if (backend) await afterConnect();
+}
+
+const wantsAdmin = params.has('admin') || location.hash === '#admin';
+if (wantsAdmin) {
+  const u = new URL(location.href);
+  u.searchParams.delete('admin');
+  if (u.hash === '#admin') u.hash = '';
+  history.replaceState(null, '', u.toString());
+}
+
+async function afterConnect() {
+  if (storage.get(K.admin) === true) {
+    const ok = await backend.restore();
+    if (ok === true) { enterAdmin({ silent: true }); return; }
+    if (ok === false) storage.remove(K.admin);
+  }
+  if (wantsAdmin && !state.isAdmin) openPin();
+}
+
+/* ---------- Admin writes: optimistic + batched ---------- */
+let flushTimer = null;
+let firstQueuedAt = 0;
+
+function applyDelta(id, delta, { record = true } = {}) {
+  if (!state.isAdmin || !delta || !TEAM_BY_ID[id]) return;
+  state.queue[id] = (state.queue[id] || 0) + delta;
+  if (record) {
+    state.undo.push({ id, delta });
+    if (state.undo.length > 60) state.undo.shift();
+  }
+  haptic();
+  scheduleFlush();
+  refreshStatus();
+  scheduleRender();
+}
+
+function scheduleFlush() {
+  const now = Date.now();
+  if (!firstQueuedAt) firstQueuedAt = now;
+  clearTimeout(flushTimer);
+  const wait = Math.max(0, Math.min(CONFIG.batchDelayMs, CONFIG.batchMaxWaitMs - (now - firstQueuedAt)));
+  flushTimer = setTimeout(flush, wait);
+}
+
+function flush() {
+  clearTimeout(flushTimer);
+  flushTimer = null;
+  firstQueuedAt = 0;
+  const deltas = {};
+  for (const [id, d] of Object.entries(state.queue)) if (d) deltas[id] = d;
+  state.queue = {};
+  if (!Object.keys(deltas).length || !backend) { scheduleRender(); return Promise.resolve(); }
+  // No render here: the backend's own snapshot (local write) repaints immediately.
+  return backend.applyDeltas(deltas).catch(handleWriteError);
+}
+
+function handleWriteError(err) {
+  console.error('[CampScore] write failed', err);
+  if (err?.code === 'permission-denied') {
+    toast('บันทึกคะแนนไม่ได้ เพราะสิทธิ์ผู้ดูแลหมดอายุ เข้าสู่โหมดผู้ดูแลอีกครั้ง', 'err', 5000);
+    if (state.isAdmin) exitAdmin({ silent: true });
+  } else {
+    toast('บันทึกคะแนนไม่สำเร็จ ลองอีกครั้ง', 'err');
+  }
+}
+
+function undoLast() {
+  const last = state.undo.pop();
+  if (!last) return;
+  applyDelta(last.id, -last.delta, { record: false });
+  toast(`ย้อนกลับ ${TEAM_BY_ID[last.id].name} ${fmtDelta(-last.delta)}`, 'info', 2000);
+}
+
+function doReset() {
+  if (!backend || !state.isAdmin) return;
+  clearTimeout(flushTimer);
+  flushTimer = null;
+  firstQueuedAt = 0;
+  state.queue = {};
+  state.undo = [];
+  backend.reset().catch(handleWriteError);
+  toast('รีเซ็ตคะแนนทุกทีมแล้ว', 'ok');
+}
+
+/* =============================================================================
+   8) RENDERING
+   ============================================================================= */
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; render(); });
+}
+
+function displayScores() {
+  const s = { ...state.scores };
+  for (const [id, d] of Object.entries(state.queue)) s[id] = (s[id] || 0) + d;
+  return s;
+}
+
+function rankTeams(scores) {
+  const sorted = TEAMS
+    .map((t) => ({ t, score: scores[t.id] }))
+    .sort((a, b) => b.score - a.score || a.t.index - b.t.index);
+  return sorted.map((e) => ({ ...e, rank: 1 + sorted.filter((o) => o.score > e.score).length }));
+}
+
+function render() {
+  const scores = displayScores();
+  const ranked = rankTeams(scores);
+  const quiet = state.quietNext || !state.rendered.scores;
+  state.quietNext = false;
+  renderPodium(ranked, quiet);
+  renderBoard(ranked, quiet);
+  if (state.isAdmin) renderAdmin(ranked);
+  renderMeta(ranked);
+  checkLeader(ranked);
+  state.rendered.scores = scores;
+}
+
+/* Count-up numbers (interruptible) */
+function animateNumber(node, to, duration = 700) {
+  const from = node._shown ?? to;
+  cancelAnimationFrame(node._raf);
+  if (from === to || reduceMotion.matches || document.hidden) {
+    node._shown = to;
+    node.textContent = fmt(to);
+    return;
+  }
+  const start = performance.now();
+  const step = (now) => {
+    const p = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - p, 3);
+    node._shown = Math.round(from + (to - from) * eased);
+    node.textContent = fmt(node._shown);
+    if (p < 1) node._raf = requestAnimationFrame(step);
+  };
+  node._raf = requestAnimationFrame(step);
+}
+
+function restartAnimation(node, cls) {
+  node.classList.remove(cls);
+  void node.offsetWidth;
+  node.classList.add(cls);
+}
+
+/* ---------- Podium ---------- */
+const podiumSlots = {};
+function buildPodium() {
+  const podium = $('#podium');
+  [2, 1, 3].forEach((place) => {
+    const node = el(`
+      <div class="slot place-${place} tc">
+        <div class="slot-mascot">
+          <div class="mascot-wrap">
+            ${place === 1 ? `<div class="crown-pos"><div class="crown">${CROWN_SVG}</div></div>` : ''}
+            <div class="mascot-host"></div>
+          </div>
+        </div>
+        <div class="pillar">
+          <span class="p-name"></span>
+          <span class="p-score num">0</span>
+          <span class="p-unit">คะแนน<span class="tie-chip" hidden>เสมอ</span></span>
+          <span class="pillar-rank" aria-hidden="true">${place}</span>
+        </div>
+      </div>`);
+    podium.appendChild(node);
+    podiumSlots[place] = {
+      el: node,
+      box: $('.slot-mascot', node),
+      host: $('.mascot-host', node),
+      crown: $('.crown-pos', node),
+      name: $('.p-name', node),
+      score: $('.p-score', node),
+      tie: $('.tie-chip', node),
+      rank: $('.pillar-rank', node),
+      id: null,
+      lastScore: null,
+    };
+  });
+  setTimeout(() => podium.classList.remove('intro'), 1800);
+}
+
+function renderPodium(ranked, quiet) {
+  const allZero = ranked.every((r) => r.score === 0);
+  [1, 2, 3].forEach((place) => {
+    const r = ranked[place - 1];
+    const slot = podiumSlots[place];
+    if (slot.id !== r.t.id) {
+      slot.id = r.t.id;
+      setTeamVars(slot.el, r.t);
+      slot.el.style.setProperty('--crown-x', `${r.t.crown[0]}%`);
+      slot.el.style.setProperty('--crown-y', `${r.t.crown[1]}%`);
+      slot.host.innerHTML = mascotHTML(r.t);
+      slot.name.textContent = r.t.name;
+      slot.score._shown = r.score;
+      slot.lastScore = r.score;
+      if (!quiet && !reduceMotion.matches) restartAnimation(slot.box, 'swap');
+    } else if (!quiet && slot.lastScore !== r.score) {
+      react($('.mascot', slot.host), r.score - slot.lastScore);
+    }
+    slot.lastScore = r.score;
+    if (quiet) slot.score._shown = r.score;
+    animateNumber(slot.score, r.score);
+    $('.mascot', slot.host)?.classList.toggle('happy', place === 1 && !allZero);
+    slot.rank.textContent = allZero ? place : r.rank;
+    slot.tie.hidden = allZero || ranked.filter((o) => o.rank === r.rank).length < 2;
+    slot.el.setAttribute('aria-label', `อันดับ ${r.rank} ${r.t.name} ${r.score} คะแนน`);
+  });
+  podiumSlots[1].crown.style.visibility = allZero ? 'hidden' : '';
+  $('#podium').classList.toggle('empty', allZero);
+  $('#podiumHint').hidden = !allZero;
+  $('#podiumCard').style.setProperty('--lead-rgb', allZero ? '160, 175, 210' : ranked[0].t.rgb);
+}
+
+/* ---------- Leaderboard ---------- */
+const rows = new Map();
+function buildBoard() {
+  const board = $('#board');
+  for (const t of TEAMS) {
+    const node = el(`
+      <li class="row tc" data-id="${t.id}" style="${teamStyle(t)}">
+        <span class="rank num" aria-hidden="true">–</span>
+        <span class="avatar-box">${mascotHTML(t)}</span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="row-name truncate">${esc(t.name)}</span>
+            <span class="move" aria-hidden="true"></span>
+          </div>
+          <div class="bar" aria-hidden="true"><span class="bar-fill"></span></div>
+        </div>
+        <div class="relative text-right pl-1">
+          <div class="row-score num">0</div>
+          <div class="row-unit t-muted light">คะแนน</div>
+          <span class="delta" aria-hidden="true"></span>
+        </div>
+      </li>`);
+    board.appendChild(node);
+    rows.set(t.id, {
+      el: node,
+      rank: $('.rank', node),
+      mascot: $('.mascot', node),
+      fill: $('.bar-fill', node),
+      score: $('.row-score', node),
+      move: $('.move', node),
+      delta: $('.delta', node),
+      moveTimer: 0,
+    });
+  }
+}
+
+function renderBoard(ranked, quiet) {
+  const board = $('#board');
+  const prevScores = quiet ? null : state.rendered.scores;
+  const prevPos = quiet ? null : state.rendered.pos;
+  const max = Math.max(0, ...ranked.map((r) => r.score));
+  const allZero = ranked.every((r) => r.score === 0);
+  const willReorder = ranked.some((r, i) => board.children[i] !== rows.get(r.t.id).el);
+  const animate = willReorder && prevScores && !reduceMotion.matches && !document.hidden;
+
+  // FLIP step 1: remember where every row is now
+  const firstTops = new Map();
+  if (animate) for (const [id, row] of rows) firstTops.set(id, row.el.getBoundingClientRect().top);
+
+  ranked.forEach((r, i) => {
+    const row = rows.get(r.t.id);
+    row.el.dataset.medal = !allZero && r.score > 0 && r.rank <= 3 ? String(r.rank) : '';
+    row.rank.textContent = allZero ? '–' : r.rank;
+    if (quiet) row.score._shown = r.score;
+    row.fill.style.width = max > 0 ? `${(Math.max(0, r.score) / max) * 100}%` : '0%';
+    animateNumber(row.score, r.score);
+    row.el.setAttribute('aria-label', `อันดับ ${r.rank} ${r.t.name} ${r.score} คะแนน`);
+    if (prevScores && prevScores[r.t.id] !== r.score) flashDelta(row, r.score - prevScores[r.t.id]);
+    if (prevPos && prevPos[r.t.id] !== undefined && prevPos[r.t.id] !== i) showMove(row, prevPos[r.t.id] - i);
+  });
+
+  if (willReorder) {
+    ranked.forEach((r) => board.appendChild(rows.get(r.t.id).el));
+    if (animate) flip(firstTops);
+  }
+  state.rendered.pos = Object.fromEntries(ranked.map((r, i) => [r.t.id, i]));
+}
+
+// FLIP steps 2-4: invert to the old position, then glide to the new one
+function flip(firstTops) {
+  const moved = [];
+  for (const [id, top] of firstTops) {
+    const node = rows.get(id).el;
+    const dy = top - node.getBoundingClientRect().top;
+    if (Math.abs(dy) < 1) continue;
+    node.style.transition = 'none';
+    node.style.transform = `translateY(${dy}px)`;
+    node.style.zIndex = dy > 0 ? '3' : '1';
+    moved.push(node);
+  }
+  if (!moved.length) return;
+  void document.body.offsetHeight;
+  for (const node of moved) {
+    node.style.transition = 'transform 700ms cubic-bezier(.25, 1.25, .4, 1)';
+    node.style.transform = '';
+    const done = () => { node.style.transition = ''; node.style.zIndex = ''; };
+    node.addEventListener('transitionend', done, { once: true });
+    setTimeout(done, 900);
+  }
+}
+
+function flashDelta(row, d) {
+  if (reduceMotion.matches) return;
+  row.delta.textContent = fmtDelta(d);
+  row.delta.className = `delta ${d > 0 ? 'pos' : 'neg'}`;
+  restartAnimation(row.delta, 'show');
+  restartAnimation(row.el, 'bump');
+  react(row.mascot, d);
+}
+
+function showMove(row, steps) {
+  row.move.innerHTML = `<i class="fa-solid fa-caret-${steps > 0 ? 'up' : 'down'}"></i>${Math.abs(steps)}`;
+  row.move.className = `move ${steps > 0 ? 'up' : 'down'} show`;
+  clearTimeout(row.moveTimer);
+  row.moveTimer = setTimeout(() => row.move.classList.remove('show'), 4000);
+}
+
+/* ---------- Admin console ---------- */
+const adminCards = new Map();
+let adminBuilt = false;
+function buildAdmin() {
+  const grid = $('#adminGrid');
+  for (const t of TEAMS) {
+    const plus = [1, 5, 10].map((n) => `<button type="button" class="adj plus" data-delta="${n}" aria-label="เพิ่ม ${n} คะแนนให้${esc(t.name)}">+${n}</button>`).join('');
+    const minus = [-1, -5, -10].map((n) => `<button type="button" class="adj minus" data-delta="${n}" aria-label="หัก ${-n} คะแนนจาก${esc(t.name)}">−${-n}</button>`).join('');
+    const node = el(`
+      <article class="admin-card card tc" data-id="${t.id}" style="${teamStyle(t)}">
+        <div class="flex items-center gap-3">
+          <span class="avatar-box">${mascotHTML(t)}</span>
+          <div class="flex-1 min-w-0">
+            <h3 class="font-medium text-base leading-tight truncate">${esc(t.name)}</h3>
+            <p class="admin-sub text-xs t-muted light mt-0.5">อันดับ 1</p>
+          </div>
+          <div class="admin-score num">0</div>
+        </div>
+        <div class="grid grid-cols-3 gap-2.5 mt-4">${plus}${minus}</div>
+        <button type="button" class="adj-custom" data-custom><i class="fa-solid fa-pen-to-square"></i>กำหนดจำนวนเอง</button>
+      </article>`);
+    grid.appendChild(node);
+    adminCards.set(t.id, { el: node, mascot: $('.mascot', node), score: $('.admin-score', node), sub: $('.admin-sub', node) });
+  }
+  grid.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    const card = btn?.closest('[data-id]');
+    if (!btn || !card) return;
+    const id = card.dataset.id;
+    if (btn.dataset.delta) {
+      const d = Number(btn.dataset.delta);
+      applyDelta(id, d);
+      react(adminCards.get(id)?.mascot, d);
+    } else if (btn.hasAttribute('data-custom')) {
+      openCustom(id);
+    }
+  });
+  adminBuilt = true;
+}
+
+function renderAdmin(ranked) {
+  for (const r of ranked) {
+    const card = adminCards.get(r.t.id);
+    if (!card) continue;
+    animateNumber(card.score, r.score, 300);
+    const q = state.queue[r.t.id] || 0;
+    card.sub.textContent = q ? `${fmtDelta(q)} กำลังส่ง` : `อันดับ ${r.rank}`;
+    card.sub.classList.toggle('pending', !!q);
+  }
+  $('#undoBtn').disabled = state.undo.length === 0;
+}
+
+/* ---------- Meta: totals, timestamps, title ---------- */
+function renderMeta(ranked) {
+  const total = ranked.reduce((sum, r) => sum + r.score, 0);
+  $('#totalPoints').textContent = fmt(total);
+  $('#updatedAt').textContent = state.updatedAt
+    ? new Date(state.updatedAt).toLocaleString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: 'numeric', month: 'short' })
+    : 'ยังไม่มีข้อมูล';
+  const top = ranked[0];
+  const unique = top.score > 0 && ranked[1].score < top.score;
+  document.title = unique ? `${top.t.name} นำอยู่ | ${CONFIG.title}` : `${CONFIG.title} | ${CONFIG.subtitle}`;
+}
+
+/* ---------- Leader change: confetti + dancing mascot ---------- */
+function checkLeader(ranked) {
+  const top = ranked[0];
+  const unique = top.score > 0 && ranked[1].score < top.score ? top.t.id : null;
+  if (state.leaderId === undefined) { state.leaderId = unique; return; }
+  if (ranked.every((r) => r.score === 0)) { state.leaderId = null; return; }
+  if (unique && unique !== state.leaderId) {
+    state.leaderId = unique;
+    celebrate(top.t);
+  }
+}
+
+let bannerTimer = 0;
+function celebrate(team) {
+  announce(`${team.name} ขึ้นเป็นอันดับ 1`);
+  const banner = $('#leaderBanner');
+  setTeamVars(banner, team);
+  $('#leaderAvatar').innerHTML = mascotHTML(team, 'dance happy');
+  $('#leaderName').textContent = team.name;
+  banner.classList.add('show');
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => banner.classList.remove('show'), 3800);
+
+  if (reduceMotion.matches || document.hidden || typeof window.confetti !== 'function') return;
+  const colors = [team.color, team.ink, '#ffffff', '#ffc233', '#ff7aa2'];
+  const shared = { colors, zIndex: 65, disableForReducedMotion: true, shapes: ['star', 'circle', 'square'] }; // under modals (70)
+  window.confetti({ ...shared, particleCount: 120, spread: 90, startVelocity: 44, origin: { x: 0.5, y: 0.32 }, scalar: 1.1 });
+  const end = Date.now() + 1500;
+  (function sideCannons() {
+    window.confetti({ ...shared, particleCount: 3, angle: 60, spread: 55, origin: { x: 0, y: 0.7 } });
+    window.confetti({ ...shared, particleCount: 3, angle: 120, spread: 55, origin: { x: 1, y: 0.7 } });
+    if (Date.now() < end) requestAnimationFrame(sideCannons);
+  })();
+}
+
+/* ---------- Activity feed (derived from snapshot diffs: zero extra reads) ---------- */
+function pushFeed(entry) {
+  state.feed.unshift({ ...entry, at: Date.now(), fresh: true });
+  state.feed = state.feed.slice(0, 12);
+  storage.set(K.feed, state.feed.map(({ fresh, ...rest }) => rest));
+  renderFeed();
+}
+
+function timeAgo(ts) {
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 45) return 'เมื่อสักครู่';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} นาทีที่แล้ว`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} ชั่วโมงที่แล้ว`;
+  return new Date(ts).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+}
+
+function renderFeed() {
+  const list = $('#feed');
+  if (!state.feed.length) {
+    list.innerHTML = `
+      <li class="flex flex-col items-center text-center pt-4 pb-3">
+        <div class="lineup">${TEAMS.map((t) => mascotHTML(t)).join('')}</div>
+        <span class="text-sm t-muted light mt-3">คะแนนที่เพิ่มหรือหักจะเด้งขึ้นที่นี่ทันที</span>
+      </li>`;
+    return;
+  }
+  list.innerHTML = state.feed.map((e) => {
+    const fresh = e.fresh ? ' fresh' : '';
+    if (e.type === 'reset') {
+      return `
+        <li class="feed-item${fresh}">
+          <span class="avatar-box xs grid place-items-center" style="--c-rgb:150, 160, 190"><i class="fa-solid fa-arrows-rotate text-xs t-ink2"></i></span>
+          <span class="flex-1 min-w-0 truncate text-sm">รีเซ็ตคะแนนทุกทีมเป็น 0</span>
+          <time class="text-xs t-muted light whitespace-nowrap" data-at="${e.at}">${timeAgo(e.at)}</time>
+        </li>`;
+    }
+    const t = TEAM_BY_ID[e.id];
+    if (!t) return '';
+    return `
+      <li class="feed-item tc${fresh}" style="${teamStyle(t)}">
+        <span class="avatar-box xs">${mascotHTML(t, 'static')}</span>
+        <span class="flex-1 min-w-0 truncate text-sm">${esc(t.name)}</span>
+        <span class="chip ${e.delta > 0 ? 'pos' : 'neg'}">${fmtDelta(e.delta)}</span>
+        <time class="text-xs t-muted light whitespace-nowrap w-[5.5rem] text-right" data-at="${e.at}">${timeAgo(e.at)}</time>
+      </li>`;
+  }).join('');
+  state.feed.forEach((e) => { delete e.fresh; });
+}
+
+function refreshFeedTimes() {
+  document.querySelectorAll('#feed time[data-at]').forEach((t) => { t.textContent = timeAgo(Number(t.dataset.at)); });
+}
+
+/* ---------- Connection status ---------- */
+const STATUS = {
+  connecting: { label: 'กำลังเชื่อมต่อ', cls: 'st-wait' },
+  live: { label: 'สด', cls: 'st-live' },
+  syncing: { label: 'กำลังซิงก์', cls: 'st-wait' },
+  offline: { label: 'ออฟไลน์', cls: 'st-off' },
+  error: { label: 'เชื่อมต่อไม่ได้', cls: 'st-err' },
+  demo: { label: 'เดโม', cls: 'st-demo' },
+};
+
+function refreshStatus() {
+  let s;
+  if (IS_DEMO) s = 'demo';
+  else if (state.listenError) s = 'error';
+  else if (!navigator.onLine || state.backendFailed) s = 'offline';
+  else if (!backend || !state.everLive) s = state.connectTimedOut ? 'offline' : 'connecting';
+  else if (state.fromCache) s = 'offline';
+  else if (state.pending || Object.keys(state.queue).length) s = 'syncing';
+  else s = 'live';
+  if (s === state.status) return;
+  const wasLive = state.status === 'live';
+  state.status = s;
+  const pill = $('#statusPill');
+  pill.className = `status ${STATUS[s].cls}`;
+  $('.label', pill).textContent = STATUS[s].label;
+  pill.title = s === 'offline' ? 'กำลังแสดงคะแนนล่าสุดที่บันทึกไว้ คะแนนจะอัปเดตเองเมื่อกลับมาออนไลน์' : '';
+  if (wasLive && s === 'offline' && state.isAdmin) {
+    toast('ออฟไลน์อยู่ คะแนนที่กดจะถูกส่งเองเมื่อกลับมาออนไลน์', 'warn', 4000);
+  }
+}
+
+/* =============================================================================
+   9) UI: modals, toasts, share, theme, fullscreen
+   ============================================================================= */
+const openModals = [];
+function openModal(id) {
+  const m = document.getElementById(id);
+  if (!m || openModals.includes(m)) return;
+  m._returnFocus = document.activeElement;
+  m.hidden = false;
+  openModals.push(m);
+  document.body.classList.add('modal-open');
+  requestAnimationFrame(() => requestAnimationFrame(() => m.classList.add('open')));
+  setTimeout(() => (m.querySelector('input:not([readonly]), button:not([data-close])'))?.focus({ preventScroll: true }), 80);
+}
+function closeModal(idOrEl) {
+  const m = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+  const i = openModals.indexOf(m);
+  if (i === -1) return;
+  openModals.splice(i, 1);
+  m.classList.remove('open');
+  setTimeout(() => { if (!openModals.includes(m)) m.hidden = true; }, 320);
+  if (!openModals.length) document.body.classList.remove('modal-open');
+  m._returnFocus?.focus?.({ preventScroll: true });
+}
+document.addEventListener('click', (e) => {
+  const closer = e.target.closest('[data-close]');
+  if (closer) closeModal(closer.closest('.modal'));
+});
+
+function toast(message, type = 'info', ms = 2600) {
+  const icons = { info: 'fa-circle-info', ok: 'fa-circle-check', warn: 'fa-triangle-exclamation', err: 'fa-circle-exclamation' };
+  const node = el(`<div class="toast glass-strong toast-${type}" role="status"><i class="fa-solid ${icons[type] || icons.info}" aria-hidden="true"></i><span></span></div>`);
+  $('span', node).textContent = message;
+  const box = $('#toasts');
+  box.appendChild(node);
+  while (box.children.length > 3) box.firstElementChild.remove();
+  requestAnimationFrame(() => requestAnimationFrame(() => node.classList.add('show')));
+  setTimeout(() => { node.classList.remove('show'); setTimeout(() => node.remove(), 320); }, ms);
+}
+
+function announce(text) {
+  const a = $('#announcer');
+  a.textContent = '';
+  setTimeout(() => { a.textContent = text; }, 50);
+}
+
+/* ---------- PIN ---------- */
+let pinFails = 0;
+let pinLockedUntil = 0;
+function openPin() {
+  if (state.isAdmin) { toast('อยู่ในโหมดผู้ดูแลแล้ว'); return; }
+  $('#pinInput').value = '';
+  $('#pinError').textContent = '';
+  $('#pinDemoHint').hidden = !IS_DEMO;
+  openModal('pinModal');
+}
+function pinError(message) {
+  $('#pinError').textContent = message;
+  const input = $('#pinInput');
+  restartAnimation(input, 'shake');
+  input.select();
+  haptic(40);
+}
+async function submitPin(e) {
+  e.preventDefault();
+  const pin = $('#pinInput').value.trim();
+  if (!pin) { pinError('กรอกรหัสผู้ดูแลก่อน'); return; }
+  if (Date.now() < pinLockedUntil) {
+    pinError(`ใส่รหัสผิดหลายครั้ง ลองใหม่ได้ใน ${Math.ceil((pinLockedUntil - Date.now()) / 1000)} วินาที`);
+    return;
+  }
+  if (!backend) { pinError('ยังเชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง'); return; }
+  const btn = $('#pinSubmit');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i><span>กำลังตรวจสอบ</span>';
+  try {
+    const ok = await backend.unlock(pin);
+    if (ok) {
+      pinFails = 0;
+      closeModal('pinModal');
+      enterAdmin();
+    } else {
+      pinFails += 1;
+      if (pinFails >= 5) { pinLockedUntil = Date.now() + 30000; pinFails = 0; }
+      pinError('รหัสไม่ถูกต้อง');
+    }
+  } catch (err) {
+    console.error('[CampScore] unlock failed', err);
+    const code = err?.code || '';
+    if (code === 'too-many-attempts') {
+      pinError('ใส่รหัสผิดหลายครั้ง ลองใหม่ได้ในอีก 10 นาที');
+    } else if (code === 'timeout' || code === 'unavailable') {
+      pinError('ตรวจสอบรหัสไม่ได้ ต้องเชื่อมต่ออินเทอร์เน็ตก่อน');
+    } else {
+      pinError('ตรวจสอบรหัสไม่สำเร็จ ลองอีกครั้ง');
+    }
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-unlock"></i><span>ปลดล็อก</span>';
+  }
+}
+
+function enterAdmin({ silent = false } = {}) {
+  state.isAdmin = true;
+  storage.set(K.admin, true);
+  if (!adminBuilt) buildAdmin();
+  $('#adminBar').hidden = false;
+  $('#adminConsole').hidden = false;
+  document.body.classList.add('is-admin');
+  scheduleRender();
+  if (!silent) toast('เข้าสู่โหมดผู้ดูแลแล้ว', 'ok');
+}
+
+async function exitAdmin({ silent = false } = {}) {
+  await withTimeout(flush(), 5000).catch(() => {});
+  state.isAdmin = false;
+  state.undo = [];
+  storage.remove(K.admin);
+  $('#adminBar').hidden = true;
+  $('#adminConsole').hidden = true;
+  document.body.classList.remove('is-admin');
+  await backend?.lock?.();
+  if (!silent) toast('ออกจากโหมดผู้ดูแลแล้ว');
+}
+
+/* ---------- Custom amount ---------- */
+const custom = { id: null, sign: 1 };
+function openCustom(id) {
+  const t = TEAM_BY_ID[id];
+  custom.id = id;
+  setCustomSign(1);
+  setTeamVars($('#customSheet'), t);
+  $('#customAvatar').innerHTML = mascotHTML(t);
+  $('#customTeam').textContent = t.name;
+  $('#customInput').value = '';
+  updateCustomButton();
+  openModal('customModal');
+}
+function setCustomSign(sign) {
+  custom.sign = sign;
+  document.querySelectorAll('#customModal .seg-btn').forEach((b) => b.setAttribute('aria-checked', String(Number(b.dataset.sign) === sign)));
+  updateCustomButton();
+}
+function customValue() {
+  const v = Math.trunc(Number($('#customInput').value));
+  return Number.isFinite(v) && v >= 1 && v <= 9999 ? v : 0;
+}
+function updateCustomButton() {
+  const v = customValue();
+  const btn = $('#customApply');
+  btn.disabled = !v;
+  btn.textContent = v ? `${custom.sign > 0 ? 'เพิ่ม' : 'หัก'} ${nf.format(v)} คะแนน` : 'ใส่จำนวนคะแนน';
+}
+function applyCustom() {
+  const v = customValue();
+  if (!v || !custom.id) return;
+  const d = custom.sign * v;
+  applyDelta(custom.id, d);
+  react(adminCards.get(custom.id)?.mascot, d);
+  closeModal('customModal');
+  toast(`${TEAM_BY_ID[custom.id].name} ${fmtDelta(d)} คะแนน`, 'ok', 2000);
+}
+
+/* ---------- Press-and-hold confirm (reset) ---------- */
+function setupHold(btn, ms, onDone) {
+  const fill = $('.hold-fill', btn);
+  let raf = 0;
+  let holding = false;
+  const cancel = () => {
+    holding = false;
+    cancelAnimationFrame(raf);
+    fill.style.transform = 'scaleX(0)';
+  };
+  const start = () => {
+    if (holding) return;
+    holding = true;
+    const t0 = performance.now();
+    const tick = (now) => {
+      if (!holding) return;
+      const p = Math.min(1, (now - t0) / ms);
+      fill.style.transform = `scaleX(${p})`;
+      if (p >= 1) { cancel(); haptic(30); onDone(); } else raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+  };
+  btn.addEventListener('pointerdown', (e) => { e.preventDefault(); try { btn.setPointerCapture(e.pointerId); } catch { /* ignore */ } start(); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => btn.addEventListener(ev, cancel));
+  btn.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); start(); } });
+  btn.addEventListener('keyup', (e) => { if (e.key === 'Enter' || e.key === ' ') cancel(); });
+  btn.addEventListener('blur', cancel);
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+/* ---------- Share + QR ---------- */
+function viewerUrl() {
+  const u = new URL(location.href);
+  u.search = '';
+  u.hash = '';
+  if (CAMP_ID !== CONFIG.campId) u.searchParams.set('camp', CAMP_ID);
+  return u.toString();
+}
+function renderQR(text) {
+  const box = $('#qrBox');
+  if (typeof window.qrcode !== 'function') {
+    box.innerHTML = '<p class="text-sm text-center px-4" style="color:#334155">โหลดตัวสร้าง QR ไม่สำเร็จ ใช้ลิงก์ด้านล่างแทน</p>';
+    return;
+  }
+  try {
+    const qr = window.qrcode(0, 'M');
+    qr.addData(text);
+    qr.make();
+    box.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 0, scalable: true });
+  } catch (err) {
+    console.error('[CampScore] QR failed', err);
+    box.innerHTML = '<p class="text-sm text-center px-4" style="color:#334155">ลิงก์ยาวเกินไปสำหรับ QR ใช้ลิงก์ด้านล่างแทน</p>';
+  }
+}
+function openShare() {
+  const url = viewerUrl();
+  $('#shareUrl').value = url;
+  renderQR(url);
+  const lineup = $('#shareLineup');
+  if (!lineup.childElementCount) lineup.innerHTML = TEAMS.map((t) => mascotHTML(t)).join('');
+  const note = $('#shareNote');
+  if (location.protocol === 'file:') {
+    note.hidden = false;
+    note.textContent = 'ตอนนี้เปิดจากไฟล์ในเครื่อง มือถือคนอื่นจะเปิดลิงก์นี้ไม่ได้ อัปโหลดไฟล์ขึ้นเว็บโฮสต์ก่อน (เช่น GitHub Pages) แล้วแชร์อีกครั้ง';
+  } else if (IS_DEMO) {
+    note.hidden = false;
+    note.textContent = 'โหมดเดโม: ผู้ชมจะเห็นคะแนนเฉพาะในเครื่องของตัวเอง ตั้งค่า apiUrl ก่อนแชร์ให้ทั้งค่าย';
+  } else {
+    note.hidden = true;
+  }
+  $('#nativeShareBtn').hidden = typeof navigator.share !== 'function';
+  openModal('shareModal');
+}
+async function copyLink() {
+  const input = $('#shareUrl');
+  let ok = false;
+  try { await navigator.clipboard.writeText(input.value); ok = true; } catch {
+    input.select();
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+  }
+  const btn = $('#copyBtn');
+  if (ok) {
+    btn.innerHTML = '<i class="fa-solid fa-check"></i><span>คัดลอกแล้ว</span>';
+    setTimeout(() => { btn.innerHTML = '<i class="fa-regular fa-copy"></i><span>คัดลอก</span>'; }, 1800);
+  } else {
+    toast('คัดลอกอัตโนมัติไม่ได้ กดค้างที่ลิงก์เพื่อคัดลอก', 'warn');
+  }
+}
+async function nativeShare() {
+  try {
+    await navigator.share({ title: CONFIG.title, text: 'ดูคะแนนค่ายแบบสด ๆ ได้ที่นี่', url: $('#shareUrl').value });
+  } catch { /* user cancelled */ }
+}
+
+/* ---------- Theme ---------- */
+const THEMES = ['auto', 'light', 'dark'];
+const THEME_META = {
+  auto: { icon: 'fa-circle-half-stroke', label: 'อัตโนมัติตามระบบ' },
+  light: { icon: 'fa-sun', label: 'สว่าง' },
+  dark: { icon: 'fa-moon', label: 'มืด' },
+};
+function applyTheme(theme) {
+  const t = THEMES.includes(theme) ? theme : 'auto';
+  if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.dataset.theme = t;
+  const btn = $('#themeBtn');
+  btn.innerHTML = `<i class="fa-solid ${THEME_META[t].icon}"></i>`;
+  btn.setAttribute('aria-label', `ธีม: ${THEME_META[t].label}`);
+  btn.dataset.theme = t;
+  requestAnimationFrame(() => {
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bg || '#f2f7ff');
+  });
+}
+function cycleTheme() {
+  const cur = $('#themeBtn').dataset.theme || 'auto';
+  const next = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length];
+  storage.set(K.theme, next);
+  applyTheme(next);
+  toast(`ธีม: ${THEME_META[next].label}`, 'info', 1400);
+}
+
+/* ---------- Fullscreen (projector) + keep screen awake ---------- */
+let wakeLock = null;
+async function requestWakeLock() {
+  try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { wakeLock = null; }
+}
+async function toggleFullscreen() {
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+    else await document.exitFullscreen();
+  } catch { toast('เบราว์เซอร์นี้ไม่รองรับโหมดเต็มจอ', 'warn'); }
+}
+document.addEventListener('fullscreenchange', () => {
+  const on = !!document.fullscreenElement;
+  $('#fullscreenBtn').innerHTML = `<i class="fa-solid ${on ? 'fa-compress' : 'fa-expand'}"></i>`;
+  $('#fullscreenBtn').setAttribute('aria-label', on ? 'ออกจากเต็มจอ' : 'เต็มจอ');
+  if (on) requestWakeLock();
+  else { wakeLock?.release?.().catch(() => {}); wakeLock = null; }
+});
+
+/* =============================================================================
+   10) INIT
+   ============================================================================= */
+function bindEvents() {
+  // Hidden admin entry: tap the logo 5 times within 1.6 s
+  let taps = [];
+  $('#logoBtn').addEventListener('click', () => {
+    const now = Date.now();
+    taps = taps.filter((t) => now - t < 1600);
+    taps.push(now);
+    if (taps.length >= 5) { taps = []; openPin(); }
+  });
+
+  $('#shareBtn').addEventListener('click', openShare);
+  $('#copyBtn').addEventListener('click', copyLink);
+  $('#nativeShareBtn').addEventListener('click', nativeShare);
+  $('#themeBtn').addEventListener('click', cycleTheme);
+  const fsBtn = $('#fullscreenBtn');
+  if (document.fullscreenEnabled) fsBtn.addEventListener('click', toggleFullscreen);
+  else fsBtn.hidden = true;
+
+  $('#pinForm').addEventListener('submit', submitPin);
+  $('#undoBtn').addEventListener('click', undoLast);
+  $('#resetBtn').addEventListener('click', () => openModal('resetModal'));
+  $('#lockBtn').addEventListener('click', () => exitAdmin());
+  setupHold($('#holdReset'), 1200, () => { closeModal('resetModal'); doReset(); });
+
+  document.querySelectorAll('#customModal .seg-btn').forEach((b) => b.addEventListener('click', () => setCustomSign(Number(b.dataset.sign))));
+  $('#customInput').addEventListener('input', updateCustomButton);
+  $('#customInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') applyCustom(); });
+  $('#customApply').addEventListener('click', applyCustom);
+  const chips = $('#customChips');
+  [2, 3, 15, 20, 50, 100].forEach((n) => {
+    const c = el(`<button type="button" class="qchip">${n}</button>`);
+    c.addEventListener('click', () => { $('#customInput').value = n; updateCustomButton(); });
+    chips.appendChild(c);
+  });
+
+  const demoBanner = $('#demoBanner');
+  demoBanner.hidden = !IS_DEMO || storage.get(K.demoBanner) === true;
+  $('#demoClose').addEventListener('click', () => { demoBanner.hidden = true; storage.set(K.demoBanner, true); });
+
+  document.addEventListener('keydown', (e) => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+    if (e.key === 'Escape' && openModals.length) { closeModal(openModals[openModals.length - 1]); return; }
+    if (typing || openModals.length || e.altKey) return;
+    if (state.isAdmin && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undoLast(); return; }
+    if (!e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'f' && document.fullscreenEnabled) toggleFullscreen();
+  });
+
+  window.addEventListener('online', () => {
+    if (state.backendFailed) { location.reload(); return; }
+    refreshStatus();
+  });
+  window.addEventListener('offline', refreshStatus);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
+    else {
+      refreshFeedTimes();
+      scheduleRender();
+      if (document.fullscreenElement && !wakeLock) requestWakeLock();
+    }
+  });
+  window.addEventListener('pagehide', () => { flush(); });
+  setInterval(refreshFeedTimes, 30000);
+}
+
+function init() {
+  applyTheme(storage.get(K.theme, 'auto'));
+  $('#appTitle').textContent = CONFIG.title;
+  $('#appSubtitle').textContent = CONFIG.subtitle;
+  $('#campLabel').textContent = `รหัสค่าย ${CAMP_ID}`;
+  buildPodium();
+  buildBoard();
+  bindEvents();
+  renderFeed();
+  refreshStatus();
+  render(); // paint cached scores right away
+
+  setTimeout(() => {
+    if (!state.everLive && !IS_DEMO) {
+      state.connectTimedOut = true;
+      refreshStatus();
+      if (state.hydrated || cached) toast('ยังเชื่อมต่อไม่ได้ กำลังแสดงคะแนนล่าสุดที่บันทึกไว้', 'warn', 3500);
+    }
+  }, 10000);
+
+  connect();
+}
+
+init();
+</script>
+</body>
+</html>
