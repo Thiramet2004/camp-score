@@ -63,7 +63,8 @@ export default {
     if (!m) return url.pathname === '/' ? json({ ok: true, service: 'camp-score' }) : json({ error: 'not-found' }, 404);
     const [, campId, action = 'board'] = m;
     if (!CAMP_RE.test(campId)) return json({ error: 'bad-camp' }, 400);
-    if (!env.ADMIN_PIN || !env.TOKEN_SECRET) return json({ error: 'not-configured' }, 500);
+    const missing = ['ADMIN_PIN', 'TOKEN_SECRET'].filter((k) => !env[k]);
+    if (missing.length) return json({ error: 'not-configured', missing }, 500);
 
     const board = env.BOARD.get(env.BOARD.idFromName(campId));
 
