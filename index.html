@@ -29,7 +29,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#f2f7ff" />
 <meta name="description" content="กระดานคะแนนค่ายแบบเรียลไทม์ ดูอันดับทุกทีมได้ทันทีจากมือถือหรือจอโปรเจกเตอร์" />
-<title>Camp Score | กระดานคะแนนสด</title>
+<title>ค่ายศรีตังสัมพันธ์ ครั้งที่ 12 | Camp Score</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%95%3C/text%3E%3C/svg%3E" />
 
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -651,7 +651,7 @@
   <header class="app-header">
     <div class="wrap">
       <div class="glass header-bar rounded-[1.5rem] px-2.5 sm:px-3.5 py-2.5 flex items-center gap-2.5 sm:gap-3">
-        <button id="logoBtn" class="logo" type="button" aria-label="Camp Score">
+        <button id="logoBtn" class="logo" type="button" aria-label="ค่ายศรีตังสัมพันธ์ ครั้งที่ 12">
           <svg viewBox="0 0 48 48" aria-hidden="true">
             <path d="M24 3v7" stroke="#1b2340" stroke-width="2.2" stroke-linecap="round"/>
             <path d="M24.5 3.5 33 6.2 24.5 9Z" fill="#ff5d73"/>
@@ -663,8 +663,8 @@
           </svg>
         </button>
         <div class="min-w-0 flex-1">
-          <h1 id="appTitle" class="font-display font-semibold text-[1.2rem] sm:text-[1.35rem] leading-tight truncate">Camp Score</h1>
-          <p id="appSubtitle" class="text-xs t-muted light truncate">กระดานคะแนนสด</p>
+          <h1 id="appTitle" class="font-display font-semibold text-[1.2rem] sm:text-[1.35rem] leading-tight truncate">ค่ายศรีตังสัมพันธ์</h1>
+          <p id="appSubtitle" class="text-xs t-muted light truncate">ครั้งที่ 12 · Camp Score</p>
         </div>
         <div id="statusPill" class="status st-wait" role="status" aria-live="polite">
           <span class="dot" aria-hidden="true"></span><span class="label">กำลังเชื่อมต่อ</span>
@@ -862,8 +862,8 @@
 const CONFIG = {
   apiUrl: 'https://camp-score-api.camp-score-api.workers.dev', // Cloudflare Worker URL; empty = local demo mode
   campId: 'youth-camp-2026',     // one scoreboard per camp id
-  title: 'Camp Score',
-  subtitle: 'กระดานคะแนนสด',
+  title: 'ค่ายศรีตังสัมพันธ์',
+  subtitle: 'ครั้งที่ 12 · Camp Score',
   demoPin: '1234',               // demo mode only; real PIN is a Worker secret
   batchDelayMs: 400,             // merge rapid admin taps into one request
   batchMaxWaitMs: 1200,
