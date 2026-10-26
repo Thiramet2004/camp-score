@@ -27,9 +27,9 @@ const MIN_TEAMS = 2;
 const MAX_TEAMS = 12;
 const TEAM_ID_RE = /^[a-z0-9_-]{1,24}$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
-const CAMP_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const CAMP_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/; // no leading "_", which is reserved
 const TOKEN_TTL_MS = 30 * 24 * 3600 * 1000;
-const MAX_FAILS = 8;               // wrong PINs per IP per window
+const MAX_FAILS = 15;              // wrong PINs per IP per window (a whole camp may share one Wi-Fi IP)
 const FAIL_WINDOW_MS = 10 * 60 * 1000;
 const MAX_DELTA = 100000;
 
@@ -104,12 +104,14 @@ export default {
     if (action === 'board' && req.method === 'GET') return json(await board.getBoard());
 
     if (action === 'unlock' && req.method === 'POST') {
+      // The PIN is shared by every camp, so failures are counted in one place, not per camp
+      const guard = env.BOARD.get(env.BOARD.idFromName('__pin-guard__'));
       const ip = req.headers.get('CF-Connecting-IP') || 'unknown';
-      if (await board.isLockedOut(ip)) return json({ error: 'too-many-attempts' }, 429);
+      if (await guard.isLockedOut(ip)) return json({ error: 'too-many-attempts' }, 429);
       const body = await req.json().catch(() => ({}));
       const pin = String(body?.pin ?? '');
       if (!pin || !safeEqual(pin, String(env.ADMIN_PIN))) {
-        await board.recordFail(ip);
+        await guard.recordFail(ip);
         return json({ error: 'wrong-pin' }, 403);
       }
       return json({ token: await makeToken(env, campId) });

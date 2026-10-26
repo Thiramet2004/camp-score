@@ -1120,7 +1120,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const params = new URLSearchParams(location.search);
 const CAMP_ID = (() => {
   const p = params.get('camp');
-  return p && /^[A-Za-z0-9_-]{1,64}$/.test(p) ? p : CONFIG.campId;
+  return p && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(p) ? p : CONFIG.campId;
 })();
 const IS_DEMO = !CONFIG.apiUrl;
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
