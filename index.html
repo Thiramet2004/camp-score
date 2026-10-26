@@ -16,7 +16,8 @@
     tabs on the same device. Demo admin PIN is 1234.
 
   ADMIN
-    Tap the logo 5 times, or open the page with ?admin. The real PIN is a
+    Tap the "แอดมิน" button in the header (or open the page with ?admin, or
+    tap the logo 5 times). The real PIN is a
     Worker secret (ADMIN_PIN) checked on the server and never shipped here.
     Rapid taps are batched client side into one request (about 400 ms).
 
@@ -232,6 +233,8 @@
     .header-bar .icon-btn { height: 2.35rem; min-width: 2.35rem; padding: 0 .55rem; }
     .header-bar .status { padding: 0 .6rem; }
     #appTitle { font-size: 1.05rem !important; }
+    /* phones: theme follows the system, leaving room for the camp name */
+    #themeBtn { display: none; }
   }
 
   .icon-btn {
@@ -252,6 +255,7 @@
   .icon-btn.primary { background: var(--primary); color: var(--on-primary); box-shadow: 0 10px 20px -12px rgba(27, 35, 64, .8); }
   .icon-btn.danger { color: var(--neg); }
   .md-only { display: none !important; }
+  .is-admin #adminBtn { display: none; }
   @media (min-width: 768px) { .md-only { display: inline-flex !important; } }
 
   .status {
@@ -675,6 +679,9 @@
         <button id="fullscreenBtn" class="icon-btn md-only" type="button" aria-label="เต็มจอ" title="เต็มจอ (F)">
           <i class="fa-solid fa-expand"></i>
         </button>
+        <button id="adminBtn" class="icon-btn" type="button" aria-label="เข้าโหมดแอดมิน" title="เข้าโหมดแอดมิน">
+          <i class="fa-solid fa-user-shield"></i><span class="hidden sm:inline">แอดมิน</span>
+        </button>
         <button id="shareBtn" class="icon-btn primary" type="button" aria-label="แชร์ลิงก์ให้ผู้ชม">
           <i class="fa-solid fa-qrcode"></i><span class="hidden sm:inline">แชร์</span>
         </button>
@@ -690,7 +697,7 @@
         <span class="font-medium" style="color:var(--ink)">โหมดเดโม</span>
         ข้อมูลเก็บในเบราว์เซอร์นี้และซิงก์ระหว่างแท็บในเครื่องเดียวกันเท่านั้น
         ใส่ <code class="text-xs px-1.5 py-0.5 rounded-md inset">apiUrl</code> ใน <code class="text-xs px-1.5 py-0.5 rounded-md inset">CONFIG</code> เพื่อใช้งานจริง
-        แตะโลโก้ 5 ครั้งเพื่อเข้าโหมดผู้ดูแล (PIN <span class="font-medium num">1234</span>)
+        กดปุ่ม "แอดมิน" มุมขวาบนเพื่อเข้าโหมดผู้ดูแล (PIN <span class="font-medium num">1234</span>)
       </p>
       <button id="demoClose" type="button" class="t-muted w-8 h-8 -mr-1 -mt-1 rounded-lg grid place-items-center" aria-label="ปิดข้อความนี้"><i class="fa-solid fa-xmark"></i></button>
     </div>
@@ -2203,7 +2210,8 @@ document.addEventListener('fullscreenchange', () => {
    10) INIT
    ============================================================================= */
 function bindEvents() {
-  // Hidden admin entry: tap the logo 5 times within 1.6 s
+  $('#adminBtn').addEventListener('click', openPin);
+  // Shortcut kept for old habits: tap the logo 5 times within 1.6 s
   let taps = [];
   $('#logoBtn').addEventListener('click', () => {
     const now = Date.now();
